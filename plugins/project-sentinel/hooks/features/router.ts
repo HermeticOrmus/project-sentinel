@@ -139,18 +139,23 @@ export function routeSubagent(input: {
   sessionModel: string
   unavailable: ReadonlySet<string>
   known: KnownModels
+  /** Plan economy: the model Explore agents get, regardless of the strategy and of the Frontier floor (`plan.economy.explore`). */
+  economyExplore?: ModelAlias
 }): RouteDecision {
+  const type = input.subagentType.toLowerCase()
+  const economy = type.includes('explore') ? input.economyExplore : undefined
   const table = tableOf(input.router)
-  if (table === null || !input.router.subagents) return { model: null, why: 'router off for subagents' }
+  // Economy's Explore model stands on its own; the rest needs the router on for subagents.
+  const picked: ModelAlias | null = economy !== undefined ? economy : table === null || !input.router.subagents ? null : type.includes('explore') ? table.explore : type.includes('plan') ? table.plan : table.general
+  if (picked === null) return { model: null, why: 'router off for subagents' }
   if (input.isFork) return { model: null, why: 'forks inherit the parent model' }
   if (input.requested !== undefined) return { model: null, why: 'model chosen by Claude' }
-  const type = input.subagentType.toLowerCase()
-  const picked = type.includes('explore') ? table.explore : type.includes('plan') ? table.plan : table.general
   if (picked === 'session') return { model: null, why: `${input.subagentType} → session model` }
-  const isFloored = input.isFrontier && input.router.strategy !== 'custom' && ALIAS_TIER[picked] < 2
+  const isEconomyExplore = economy !== undefined
+  const isFloored = !isEconomyExplore && input.isFrontier && input.router.strategy !== 'custom' && ALIAS_TIER[picked] < 2
   const alias: Family = isFloored ? 'sonnet' : picked
   if (input.unavailable.has(alias)) return { model: null, why: `${alias} unavailable this session` }
   const model = input.known.get(alias) ?? (SPAWN_ALIASES.has(alias) ? alias : null)
   if (model === null) return { model: null, why: `${input.subagentType} → ${alias}, not seen answering yet this session` }
-  return { model, why: isFloored ? `Frontier Max floor for ${input.subagentType}` : `${input.subagentType} → ${alias}` }
+  return { model, why: isEconomyExplore ? `plan economy: ${input.subagentType} → ${alias}` : isFloored ? `Frontier Max floor for ${input.subagentType}` : `${input.subagentType} → ${alias}` }
 }

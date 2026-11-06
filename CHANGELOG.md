@@ -22,7 +22,11 @@ match. `claude plugin tag plugins/project-sentinel` checks this when tagging a r
   `parking`, `hold`. It rises only on a fresh reading of the same window (one a response carried within ten minutes) and
   falls only when the window changes (another reset time, the reset time passing, or a reading ten points under the mode's
   floor); changed floors read the last reading afresh. Without a 7-day reading there is no pressure, a stale reading moves
-  nothing, and a look a minute catches the reset while a mode holds. The Runtime keeps and traces it. No effect runs yet.
+  nothing, and a look a minute catches the reset while a mode holds. The Runtime keeps and traces it.
+- **Plan economy's effects.** From `economy` up: the hand-off point drops to `plan.economy.thresholdTokens` where that is
+  lower than the person's (their saved setting is untouched and comes back with the next window), Explore agents get
+  `plan.economy.explore` (past the Frontier Max floor and with the router off), a fork is refused with a reason that names a
+  fresh agent when `plan.economy.forks` is `deny`, and the main conversation keeps its model. Park and hold follow.
 
 ### Fixed
 

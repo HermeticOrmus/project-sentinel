@@ -121,7 +121,24 @@ export type ControlRoomSettings = {
    * hours) and when it would reach 100% at that pace, where that comes before the reset. Derived
    * from Claude Code's own readings, never estimated beyond them; nothing below two readings.
    */
-  plan: { rate: boolean }
+  plan: {
+    rate: boolean
+    /**
+     * The plan gates (features/planGate.ts): act on the 7-day window's percent. `economyAt`: from
+     * this percent the run goes on in economy (a lower handoff point, light Explore agents, no
+     * forks). `parkAt`: finish the turn, write the handoff and park the run until the reset.
+     * `holdAt`: no automated turn until the reset; the person's own prompts still run. Kept in
+     * rising order (a floor set stands; one left to its default bends down to it); changed floors
+     * read the last reading afresh. Without a 7-day reading there is no pressure; a stale reading
+     * moves nothing; a window past its reset time stands any mode down.
+     */
+    gates: boolean
+    economyAt: number
+    parkAt: number
+    holdAt: number
+    /** What economy means: the handoff point in tokens, the model Explore agents get, and whether a fork may start. */
+    economy: { thresholdTokens: number; explore: ModelAlias; forks: 'allow' | 'deny' }
+  }
   /**
    * `liveLoad`: machine-wide CPU and memory in the status bar (runs the sampler). `companion`: the
    * pixel companion on the status bar. `reducedMotion`: still drawings instead of animation.

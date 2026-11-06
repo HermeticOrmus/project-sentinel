@@ -118,6 +118,7 @@ It reads totals only: no per-process data, no process names, nothing about other
 | Keep in `$.state` (`standby`) whether it told you it stands by | In a session that still runs Control Room, so the note shows once per session, not at every reload |
 | Write its own store | Settings changes, run records; once, what it carried over from the store it kept as Control Room (never over what its own store holds), with a marker, `migrated.v1`; once, at the first load of 1.7.0: a fresh install's defaults and `onboarding.v1`, Classic for an install used before without saved settings, or, for settings saved before 1.7.0, the `defaults` marker (a profile named Normal relabelled Classic; no value changed) |
 | Show a toast and a first-run card | Once, on a fresh install: what is on (Autopilot at 70%, Frontier Max at Extra High) and where things live, until you press *Got it* |
+| Raise a native notification through your own notification channel (`$.ui.notify`, title `Plan`): your `Notification` hooks run first, reading `notification_type: plugin_notification`, then the channel writes. Its text is the 7-day plan window's percent, the threshold crossed and the window's reset time (UTC), nothing else: no account, no machine name, no project. Where no channel wrote it in words (none set, notifications off, no terminal as on Desktop, a bell alone) a toast shows it on the surface at hand, with toasts on; headless, the hooks alone run; a hook's refusal stands, and so does a rejection (a hook's deny or a failed write: Claude Code reports both the same way), with no toast | Only with plan alerts set (`plan.alerts`, empty by default), once per threshold per 7-day window on this machine as far as the store tells (kept as `planAlerts.v1`, read right before each alert): at most once per session, and two sessions reading at the same moment may each raise it once |
 
 **Permission rules that always hold:**
 
@@ -207,6 +208,10 @@ plugin name and source (`project-sentinel_<source>-<id>.json`). Project Sentinel
   most 140 characters) and Claude's task list (subjects and statuses, at most 60). With the Quest
   log style, a run also keeps its XP and the milestones already paid for (their subjects in lower
   case, at most 200). At most 30 runs and 60 sessions per run are kept; older ones are pruned.
+- `plan.v1`, with *Burn rate* (`plan.rate`) on: each plan window's reset time and its kept
+  readings (when, and the percent then; at most 288 per window).
+- `planAlerts.v1`, with plan alerts set: the 7-day window's reset time and the percents raised (written at each alert, and when a reading starts a new window)
+  for it on this machine.
 - `quest.v1`, only once the Quest log style has earned something: the total XP, when each
   achievement was unlocked, and the last 8 award lines, which may name a milestone ("Milestone:
   Fix orbitalSpeed") or a kind of check ("Tests pass").

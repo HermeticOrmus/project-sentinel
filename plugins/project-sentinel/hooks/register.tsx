@@ -96,6 +96,11 @@ function hostOf($: EngineInterface): Host {
     fork: prompt => $.model.fork({ prompt }),
 
     toast: (text, timeoutMs) => $.ui.toast(text, timeoutMs === undefined ? undefined : { timeoutMs }),
+    notify: (text, title) =>
+      Promise.resolve()
+        .then(() => $.ui.notify(text, { title }))
+        .then(r => (r.isSent ? { isSent: true as const, channel: r.channel } : { isSent: false as const, reason: r.reason }))
+        .catch((error: unknown) => ({ isSent: false as const, reason: 'rejected', detail: error instanceof Error ? error.message : String(error) })),
     status: text => $.ui.status(text),
     open: pane => $.ui.open(pane),
     close: pane => $.ui.close(pane),

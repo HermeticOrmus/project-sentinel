@@ -551,6 +551,8 @@ export function alertActions(kit: Kit, alert: NonNullable<HudModel['alert']>): A
         { key: 'budget-go', label: 'Continue anyway', onPress: a.budgetApprove, isPrimary: true },
         { key: 'budget-open', label: `Budget ${G.chevron}`, onPress: () => a.openOps('ops-budget') },
       ]
+    case 'plan':
+      return [{ key: 'plan-open', label: `${ref === 'ops-watchers' ? 'Watchers' : 'Queue'} ${G.chevron}`, onPress: () => a.openOps(ref === 'ops-watchers' ? 'ops-watchers' : 'ops-queue') }]
     case 'suggest':
       return [
         alert.hasTime === true
@@ -564,7 +566,7 @@ export function alertActions(kit: Kit, alert: NonNullable<HudModel['alert']>): A
   }
 }
 
-const ALERT_MARK: Record<NonNullable<HudModel['alert']>['kind'], string> = { pending: G.warn, awaiting: G.dot, waiting: G.wait, stuck: G.warn, load: G.warn, watcher: G.wait, held: G.warn, budget: G.warn, suggest: G.wait }
+const ALERT_MARK: Record<NonNullable<HudModel['alert']>['kind'], string> = { pending: G.warn, awaiting: G.dot, waiting: G.wait, stuck: G.warn, load: G.warn, watcher: G.wait, held: G.warn, budget: G.warn, suggest: G.wait, plan: G.wait }
 
 /** What needs the person now, on a line of its own above, with its actions. */
 function alertLine(kit: Kit, alert: NonNullable<HudModel['alert']>): RenderElement {

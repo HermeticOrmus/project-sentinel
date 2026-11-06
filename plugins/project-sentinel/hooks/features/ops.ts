@@ -77,7 +77,12 @@ export type Watcher = {
   /** Null while armed during a turn: taken when that turn ends. */
   checkpoint: Checkpoint | null
   decided: SmartChoice | null
-  source: 'person' | 'scout' | 'carried'
+  /** Who armed it: the person, the Scout, a carried one from an earlier run, or the plan gates (a park until the 7-day reset). */
+  source: 'person' | 'scout' | 'carried' | 'plan'
+  /** Held by the plan hold until this time (the window's reset): the hold's text on `needs` stands until then, a reload included. */
+  heldUntil: number | null
+  /** A plan watcher: when Claude was asked to write the notes before the park (null: not yet), kept across a reload and a carry. */
+  notesAskedAt: number | null
   firedAt: number | null
   endedAt: number | null
   outcome: string | null
@@ -213,7 +218,9 @@ function watcherOf(v: unknown): Watcher | null {
     milestone: strOrNull(v.milestone, 200),
     checkpoint: storedCheckpoint(v.checkpoint),
     decided: smartOf(v.decided),
-    source: oneOf(v.source, ['person', 'scout', 'carried'] as const, 'person'),
+    source: oneOf(v.source, ['person', 'scout', 'carried', 'plan'] as const, 'person'),
+    heldUntil: numOrNull(v.heldUntil),
+    notesAskedAt: numOrNull(v.notesAskedAt),
     firedAt: numOrNull(v.firedAt),
     endedAt: numOrNull(v.endedAt),
     outcome: strOrNull(v.outcome, 200),
@@ -519,6 +526,8 @@ export function addWatcher(
     checkpoint: input.checkpoint,
     decided: input.decided,
     source: input.source,
+    heldUntil: null,
+    notesAskedAt: null,
     firedAt: null,
     endedAt: null,
     outcome: null,

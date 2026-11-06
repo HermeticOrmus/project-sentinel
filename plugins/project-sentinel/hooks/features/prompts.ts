@@ -5,6 +5,7 @@
  */
 
 import * as fmt from '../core/format'
+import { clockAhead } from './when'
 import type { AnswerStyle, FrontierEffort, ResourceEnforcement, SubagentMode } from '../core/settings'
 
 // ---------------------------------------------------------------------------
@@ -489,11 +490,17 @@ export function answersNote(items: readonly { id: string; question: string; answ
   return `Project Sentinel · Decision Inbox: the user answered:\n${answersText(items)}`
 }
 
-/** A watcher woke the run in its own context: what it waited for, and to carry on. */
-export function wakePrompt(input: { id: string; label: string; armedAt: number; milestone: string | null; lateMs: number; queued: number }): string {
+/**
+ * A watcher's wake in this context. `isPlan`: the plan gates parked the run (until the 7-day reset) and its
+ * pressure is gone: no result to check, the work goes on.
+ */
+export function wakePrompt(input: { id: string; label: string; armedAt: number; milestone: string | null; lateMs: number; queued: number; isPlan?: boolean }): string {
   const late = input.lateMs > 5 * 60_000 ? ` It was due ${fmt.duration(input.lateMs)} ago (Claude Code was not running then).` : ''
   const milestone = input.milestone === null ? '' : ` The milestone under way was "${input.milestone}".`
   const queued = input.queued > 0 ? ` The user queued ${input.queued === 1 ? 'one item' : `${input.queued} items`} meanwhile; it follows when this turn ends.` : ''
+  if (input.isPlan === true) {
+    return `${OWN_PROMPT.wake}${input.id}): the run was parked at ${fmt.clock(input.armedAt)} by the plan gates, waiting for ${input.label}.${late}${milestone} The 7-day pressure is gone, so continue the work from where it was parked.${queued}`
+  }
   return `${OWN_PROMPT.wake}${input.id}): the run was parked at ${fmt.clock(input.armedAt)} waiting for ${input.label}.${late}${milestone} Check it now and continue the work from where it was parked. If it is not ready yet, say so and mark the milestone waiting again with its blocker; the user can set another watcher.${queued}`
 }
 
@@ -525,10 +532,29 @@ export function freshExtras(input: {
   return parts.length === 0 ? null : parts.join(' ')
 }
 
-/** Before a fresh park: notes first, so the fresh wake has them (the person asked for it). */
-export function parkPrompt(input: { id: string; label: string; wakeAt: number; handoffFile: string; planTool: string | null }): string {
+/**
+ * Before a fresh park: Claude writes the notes now, so the fresh wake has them. The person asked, or
+ * (`plan`) the plan gates park the run until the 7-day window's reset, at the percent given.
+ */
+export function parkPrompt(input: { id: string; label: string; wakeAt: number; handoffFile: string; planTool: string | null; plan?: { percent: number } | null; now?: number }): string {
   const tool = input.planTool === null ? '' : ` record the run's milestones (${input.planTool.startsWith('mcp__') ? `\`${input.planTool}\`` : input.planTool}), marking the one that waits as waiting with what it waits for, and`
-  return `${OWN_PROMPT.park}${input.id}): the user is parking this run until ${fmt.clock(input.wakeAt)}, waiting for ${input.label}, and it will wake in a fresh context. Do not continue the work now. Before the park:${tool} update \`${input.handoffFile}\` at the project root with what the fresh context needs to check ${input.label} and carry on. Then end your turn with one line.`
+  const until = input.now === undefined ? fmt.clock(input.wakeAt) : clockAhead(input.wakeAt, input.now)
+  const why =
+    input.plan == null
+      ? `the user is parking this run until ${until}, waiting for ${input.label}`
+      : `Control Room is parking this run until ${until}, the 7-day plan window's reset (the window is at ${input.plan.percent}%)`
+  const then = input.plan == null ? `check ${input.label} and carry on` : 'carry on after the reset'
+  return `${OWN_PROMPT.park}${input.id}): ${why}, and it will wake in a fresh context. Do not continue the work now. Before the park:${tool} update \`${input.handoffFile}\` at the project root with what the fresh context needs to ${then}. Then end your turn with one line.`
+}
+
+/** The plan's park, with each of the person's own prompts meanwhile: the notes must stay current for the wake at the reset. */
+export function planParkNote(input: { id: string; wakeAt: number; handoffFile: string; now: number }): string {
+  return `Project Sentinel · This run is parked by the plan gates until the 7-day window's reset (${input.id} wakes it ${clockAhead(input.wakeAt, input.now)} in a fresh context). This message is the user's own and runs. If this turn changes the work or what comes next, update \`${input.handoffFile}\` at the project root before you end it, so the notes the fresh context reads stay current.`
+}
+
+/** The plan hold (`holdAt`), with the person's own prompt: it runs; automated turns wait for the reset. */
+export function planHoldNote(input: { percent: number; resetsAt: number | null; now: number }): string {
+  return `Project Sentinel · The 7-day plan window is at ${input.percent}%${input.resetsAt === null ? '' : ` (resets ${clockAhead(input.resetsAt, input.now)})`}: Control Room holds automated turns (queued work, watcher wakes) until the reset. This message is the user's own and runs. Keep the turn short, leave the work in a clean state, and do not start work that needs more turns.`
 }
 
 /** The run budget reached, mid-turn: finish the milestone, then stop (Finish the milestone, then pause). */

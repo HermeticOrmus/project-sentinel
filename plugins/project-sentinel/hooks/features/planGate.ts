@@ -90,6 +90,13 @@ export function pressureOf(percent: number, cfg: PlanGateConfig): PlanPressure {
 export const isTicking = (model: PlanGate, now: number): boolean =>
   model.pressure !== 'normal' && model.reading !== null && model.reading.resetsAt !== null && now < model.reading.resetsAt
 
+/**
+ * Whether automated turns are held now: the pressure is `hold` and the window's reset is still ahead
+ * (read against the clock, so a wake due at the reset is never held by a step not yet taken).
+ */
+export const isHolding = (model: PlanGate, now: number): boolean =>
+  model.pressure === 'hold' && (model.reading === null || model.reading.resetsAt === null || now < model.reading.resetsAt)
+
 const rank = (p: PlanPressure): number => PRESSURES.indexOf(p)
 
 /** How far under a mode's floor a reading may fall before it counts as a new window rather than a wobble. */

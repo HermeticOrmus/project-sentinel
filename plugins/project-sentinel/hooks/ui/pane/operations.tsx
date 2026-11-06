@@ -224,7 +224,7 @@ function watcherBlock(k: Kit, ops: OpsView, w: WatcherView): RenderElement {
       {isOpen(ops, w.id) ? (
         <Box key={`w-${w.id}-details`} marginLeft={3} flexDirection="column">
           {w.decided === null ? null : <Text dimColor wrap="wrap">{`${w.strategy === 'smart' ? 'Smart chose' : 'Strategy'} ${w.decided.mode === 'fresh' ? 'Fresh' : w.decided.hold ? 'Keep warm' : 'In this context'} · ${w.decided.reason}`}</Text>}
-          <Text dimColor wrap="wrap">{spaced(k, [`Armed ${fmt.clock(w.createdAt)}`, w.milestone === null ? null : `milestone: ${w.milestone}`, w.isCheckpointPending ? 'parks when this turn ends' : 'parked at its checkpoint', w.source === 'scout' ? 'suggested by the Scout' : w.source === 'carried' ? 'from an earlier run' : null])}</Text>
+          <Text dimColor wrap="wrap">{spaced(k, [`Armed ${fmt.clock(w.createdAt)}`, w.milestone === null ? null : `milestone: ${w.milestone}`, w.isCheckpointPending ? 'parks when this turn ends' : 'parked at its checkpoint', w.source === 'scout' ? 'suggested by the Scout' : w.source === 'carried' ? 'from an earlier run' : w.source === 'plan' ? 'armed by the plan gates' : null])}</Text>
           {w.strategy !== 'warm' && !ops.resume.isHealthy ? <Text {...toneProps('warn')} wrap="wrap">{`A fresh wake needs: ${ops.resume.problems[0] ?? 'resume state'}.`}</Text> : null}
         </Box>
       ) : null}

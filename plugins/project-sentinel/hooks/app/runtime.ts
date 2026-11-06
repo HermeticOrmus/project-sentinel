@@ -167,6 +167,8 @@ export class Runtime {
   private queuePlanAlert(): void {
     this.alerting = this.alerting.then(() => this.notePlanAlert()).catch((error: unknown) => this.trace(`plan alert: failed (${error instanceof Error ? error.message : String(error)})`))
   }
+  /** The plan hold was said once with the person's prompt; said again with the next hold. */
+  private planHoldTold = false
   /** While a five-hour window counts down to its reset, or a plan gate holds: one look a minute (usage is read, never pushed, between responses). */
   private usageTicker: { cancel: () => void } | null = null
 
@@ -1553,6 +1555,13 @@ export class Runtime {
     this.trace(`plan alert: ${text}, ${how}${toast}`)
   }
 
+  /** The plan hold (`plan.holdAt`): the window's percent and reset while automated turns are held; null otherwise. */
+  planHold(): { percent: number; resetsAt: number | null } | null {
+    if (!this.settings.plan.gates || !PlanGate.isHolding(this.planGate, this.clock())) return null
+    const r = this.planGate.reading
+    return r === null ? null : { percent: r.percent, resetsAt: r.resetsAt }
+  }
+
   planGateConfig(): PlanGate.PlanGateConfig {
     const p = this.settings.plan
     return { enabled: p.gates, economyAt: p.economyAt, parkAt: p.parkAt, holdAt: p.holdAt, staleMs: PlanGate.DEFAULT_STALE_MS }
@@ -1567,6 +1576,15 @@ export class Runtime {
         this.trace(`plan gates: ${e.from} → ${e.to}${e.percent === null ? '' : ` (7-day ${e.percent}%)`}`)
         // Economy sets the hand-off point and the router; both read the pressure through `effective()`.
         this.configureAutopilot()
+        const rank = (p: PlanGate.PlanPressure): number => PlanGate.PRESSURES.indexOf(p)
+        const r = out.model.reading
+        // Parking (or hold at once): the run parks until the reset. Below parking again before it: the park ends.
+        if (r !== null && rank(e.to) >= rank('parking') && rank(e.from) < rank('parking')) this.ops.parkForPlan({ percent: r.percent, resetsAt: r.resetsAt })
+        if (e.from === 'hold' && e.to !== 'hold') {
+          this.planHoldTold = false
+          this.ops.planHoldLifted()
+        }
+        if (rank(e.to) < rank('parking') && rank(e.from) >= rank('parking')) void this.ops.planUnpark()
       }
     }
     if (before !== out.model) this.publisher.mark('hud', 'pane')
@@ -2212,6 +2230,19 @@ export class Runtime {
       this.noteObjective(text)
       if (this.autopilot.state === 'pending') context.push(prompts.pendingPromptReminder())
       this.planRoute(text)
+      // The plan hold: the person's own prompt runs, told once per hold that automated turns wait.
+      const hold = this.planHold()
+      if (hold !== null && !this.planHoldTold) {
+        this.planHoldTold = true
+        this.tell('plan', prompts.planHoldNote({ ...hold, now: this.clock() }))
+      }
+      // The plan's park: each of the person's prompts meanwhile asks Claude to keep the notes current, so the wake at the reset has
+      // them; that prompt's turn is the notes turn, so an ask of Control Room's still pending is dropped.
+      const park = this.settings.plan.gates ? this.ops.planWatcher() : null
+      if (park !== null && park.status === 'armed') {
+        this.ops.notesAskedByPerson(park.id)
+        context.push(this.delivered('plan', prompts.planParkNote({ id: park.id, wakeAt: park.wakeAt, handoffFile: this.settings.autopilot.handoffFile, now: this.clock() }), 'prompt'))
+      }
     }
     const now = this.clock()
     for (const note of this.notesBox.take('prompt', now)) context.push(this.delivered(note.kind, note.text, 'prompt'))
@@ -3121,6 +3152,17 @@ export class Runtime {
     if (before !== undefined && this.settings.plan.alerts.length > 0 && before.plan.alerts.join(',') !== this.settings.plan.alerts.join(',')) this.queuePlanAlert()
     this.stepPlanGate()
     this.syncUsageTicker()
+    // The gates turned off (after a reload the gate is normal already, so no pressure move says it): the hold is lifted on a
+    // boundary of its own (a held watcher is released whether or not the plan's own watcher still stands) and the park ends.
+    if (before !== undefined && before.plan.gates && !this.settings.plan.gates) {
+      this.ops.planHoldLifted()
+      void this.ops.planUnpark()
+    }
+    // Watchers turned on while the plan's pressure already calls for a park: the park is armed now.
+    if (before !== undefined && !before.ops.watchers && this.settings.ops.watchers && this.settings.plan.gates) {
+      const r = this.planGate.reading
+      if (r !== null && PlanGate.PRESSURES.indexOf(this.planGate.pressure) >= PlanGate.PRESSURES.indexOf('parking')) this.ops.parkForPlan({ percent: r.percent, resetsAt: r.resetsAt })
+    }
     if (!this.turn.isRunning) this.cache.schedule()
     if (host !== null && this.settings.ui.companion && this.companionTicker === null) {
       this.companionTicker = host.every(60_000, () => this.publisher.mark('hud'))

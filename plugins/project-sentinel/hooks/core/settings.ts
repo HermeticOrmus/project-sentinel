@@ -41,6 +41,9 @@ export type {
 
 export type Settings = ControlRoomSettings
 export type SystemSettings = ControlRoomSystems
+
+/** The run budget a new run starts with (`ops.budget`): the limits and what happens at one, as `/cr budget` sets them. */
+export type DefaultBudget = NonNullable<SystemSettings['ops']['budget']>
 export type CustomProfile = ControlRoomCustomProfile
 
 export const PERMISSION_CATEGORIES = [
@@ -168,7 +171,7 @@ export function classicSystems(): SystemSettings {
     progress: { milestones: true },
     answers: { style: 'standard' },
     cache: { keepWarm: false, maxIdleMinutes: 120, minTokens: 20_000, guardModelSwitch: true, stablePolicies: true, coldResume: true, coldResumeTokens: 100_000 },
-    ops: { decisions: true, watchers: true, scout: 'suggest' },
+    ops: { decisions: true, watchers: true, scout: 'suggest', budget: null },
     plan: { rate: false, gates: false, economyAt: 60, parkAt: 85, holdAt: 95, economy: { thresholdTokens: 150_000, explore: 'haiku', forks: 'deny' } },
   }
 }
@@ -217,6 +220,30 @@ const isRecord = (v: unknown): v is Record<string, unknown> =>
 const bool = (v: unknown, d: boolean): boolean => (typeof v === 'boolean' ? v : d)
 
 const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
+
+/** A limit or none: a number rounded (whole, or to cents) then in range, else null (0 and anything else read as no limit); `clamp` lifts one past the top to it. */
+const limitOf = (v: unknown, min: number, max: number, isInteger: boolean, clamp = false): number | null => {
+  if (!isNum(v)) return null
+  const n = isInteger ? Math.round(v) : Math.round(v * 100) / 100
+  if (n > max && clamp) return max
+  return n >= min && n <= max ? n : null
+}
+
+/**
+ * The default run budget (`ops.budget`): null, or the limits a new run starts with (the same
+ * shape `/cr budget` sets). A record with no limit at all reads as null; anything foreign, as the base.
+ */
+const budgetDefaultOf = (v: unknown, d: DefaultBudget | null): DefaultBudget | null => {
+  if (v === null) return null
+  if (!isRecord(v)) return d === null ? null : { ...d }
+  const budget: DefaultBudget = {
+    costUsd: limitOf(v.costUsd, 0.01, 100_000, false),
+    durationMs: limitOf(v.durationMs, 60_000, 30 * 24 * 3_600_000, true),
+    handoffs: limitOf(v.handoffs, 1, 50, true, true),
+    atLimit: pick(v.atLimit, ['notify', 'ask', 'finish'] as const, 'ask'),
+  }
+  return budget.costUsd === null && budget.durationMs === null && budget.handoffs === null ? null : budget
+}
 
 const num = (v: unknown, d: number, min: number, max: number, isInteger = true): number => {
   if (typeof v !== 'number' || !Number.isFinite(v)) return d
@@ -341,6 +368,7 @@ function normalizeSystems(raw: unknown, base: SystemSettings): SystemSettings {
       decisions: bool(op.decisions, base.ops.decisions),
       watchers: bool(op.watchers, base.ops.watchers),
       scout: pick(op.scout, WATCHER_SCOUTS, base.ops.scout),
+      budget: budgetDefaultOf(op.budget, base.ops.budget),
     },
     plan: {
       rate: bool(pl.rate, base.plan.rate),

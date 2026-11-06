@@ -851,9 +851,16 @@ export class Runtime {
         start: this.startSource?.source === 'resume' ? 'resume' : 'startup',
         now,
       })
+      // The default run budget (`ops.budget`): a new run starts with it; `/cr budget` and Operations override it for the run.
+      const budget = this.settings.ops.budget
+      if (budget !== null) {
+        this.run = { ...this.run, ops: Ops.setBudget(Ops.opsOf(this.run.ops), budget, now, `Run budget from the settings: ${Ops.budgetWords(budget)}`) }
+        this.trace(`ops: run budget from the settings (${Ops.budgetWords(budget)})`)
+      }
     }
     this.turnStartDone = this.progress().done
-    this.persistRun()
+    // A new run is saved at once: a reload within the save's delay would otherwise start a second one.
+    this.persistRun(previous === null)
   }
 
   /**

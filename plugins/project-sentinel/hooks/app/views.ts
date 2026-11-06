@@ -348,7 +348,7 @@ export function hudOf(rt: Runtime): HudModel {
 /** The plan's windows now: `resetsAt` is wall-clock time, so they are read against the system clock. */
 function planOf(rt: Runtime): HudModel['plan'] {
   const now = rt.clock()
-  return { five: planUsageView(rt.planUsage, now), windows: windowRows(rt.planUsage, now) }
+  return { five: planUsageView(rt.planUsage, now), windows: windowRows(rt.planUsage, now, rt.settings.plan.rate ? rt.planSamples : null) }
 }
 
 /** While a watcher parks the run, the cache says what becomes of it: held warm to the wake, or left to lapse for a fresh one. */

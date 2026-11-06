@@ -147,6 +147,8 @@ export class Runtime {
   autoCompactAt: number | undefined
   /** The plan's rate-limit windows as Claude Code last reported them (features/planUsage.ts): the status bar's 5H reading. */
   planUsage: PlanUsage.PlanUsage = PlanUsage.emptyPlanUsage()
+  /** The windows' readings kept for the burn rate (`plan.rate`); loaded with the settings, empty until then. */
+  planSamples: PlanUsage.PlanSamples = PlanUsage.emptySamples()
   /** While a five-hour window counts down to its reset: one look a minute (usage is read, never pushed, between responses). */
   private usageTicker: { cancel: () => void } | null = null
 
@@ -317,12 +319,15 @@ export class Runtime {
   private readonly saveSettings: Debounced<Settings>
   private readonly saveRunLater: Debounced<Chain.Run>
   private readonly saveQuest: Debounced<Quest.QuestState>
+  /** The plan windows' readings over time (`plan.rate`): written whole, debounced, under its own key. */
+  private readonly savePlanSamples: Debounced<PlanUsage.PlanSamples>
 
   constructor() {
     this.publisher = new Publisher(() => this.host, this)
     this.saveSettings = new Debounced<Settings>(() => this.host, (host, value) => host.storeSet(STORE_ENTRIES.settings, value), LIMITS.persistDebounceMs)
     this.saveRunLater = new Debounced<Chain.Run>(() => this.host, (host, run) => saveRun(host, run), LIMITS.persistDebounceMs)
     this.saveQuest = new Debounced<Quest.QuestState>(() => this.host, (host, value) => host.storeSet(STORE_ENTRIES.quest, value), LIMITS.persistDebounceMs)
+    this.savePlanSamples = new Debounced<PlanUsage.PlanSamples>(() => this.host, (host, value) => host.storeSet(STORE_ENTRIES.plan, value), LIMITS.persistDebounceMs)
     this.monitor = new ResourceMonitor(
       (pressure, previous) => this.onPressure(pressure, previous),
       () => this.publisher.mark('resources', 'hud', 'pane'),
@@ -444,6 +449,7 @@ export class Runtime {
         this.settings = loaded.settings
         await this.settleDefaults(loaded.isFresh)
         this.quest = Quest.questOf(await host.storeGet(STORE_ENTRIES.quest).catch(() => undefined))
+        if (this.settings.plan.rate) this.planSamples = PlanUsage.samplesOf(await host.storeGet(STORE_ENTRIES.plan).catch(() => undefined))
         if (loaded.wasRepaired) this.note('Some saved Control Room settings were invalid and were reset to safe defaults.')
         if (loaded.allowRemoved.length > 0) {
           const names = loaded.allowRemoved.join(', ')
@@ -1346,6 +1352,7 @@ export class Runtime {
     }
     await this.saveSettings.flush()
     await this.saveQuest.flush()
+    await this.savePlanSamples.flush()
   }
 
   // -------------------------------------------------------------------------
@@ -1397,6 +1404,7 @@ export class Runtime {
     if (rateLimits.some(r => r.kind === 'five_hour' || r.kind === 'seven_day')) this.cache.notePlan()
     const before = this.planUsage
     this.planUsage = PlanUsage.readWindows(before, rateLimits, this.clock(), isAfterAnswer)
+    if (this.settings.plan.rate && this.planUsage !== before) this.keepPlanSamples()
     if (this.planUsage !== before) {
       const five = this.planUsage.fiveHour
       if (five !== before.fiveHour || this.planUsage.isAbsent !== before.isAbsent) {
@@ -1405,6 +1413,24 @@ export class Runtime {
       this.publisher.mark('hud', 'pane')
     }
     this.syncUsageTicker()
+  }
+
+  /** The windows' readings now, kept where they moved (`plan.rate`); written debounced under `plan.v1`. */
+  private keepPlanSamples(): void {
+    const samples = PlanUsage.noteSamples(this.planSamples, this.planUsage, this.clock())
+    if (samples === this.planSamples) return
+    this.planSamples = samples
+    this.savePlanSamples.schedule(samples)
+    this.publisher.mark('hud', 'pane')
+  }
+
+  /** `plan.rate` turned on in the session: the readings kept before (another session, an earlier run) are read back, then today's added. */
+  private async loadPlanSamples(): Promise<void> {
+    const host = this.host
+    if (host === null) return
+    this.planSamples = PlanUsage.samplesOf(await host.storeGet(STORE_ENTRIES.plan).catch(() => undefined))
+    this.keepPlanSamples()
+    this.publisher.mark('hud', 'pane')
   }
 
   /** Claude Code ended a request on an API error: a rate limit is the plan's limit reached (or a throttle), shown until it lifts. */
@@ -2964,6 +2990,7 @@ export class Runtime {
     const host = this.host
     const before = input.before
     this.configureAutopilot()
+    if (before !== undefined && !before.plan.rate && this.settings.plan.rate) void this.loadPlanSamples()
     if (!this.turn.isRunning) this.cache.schedule()
     if (host !== null && this.settings.ui.companion && this.companionTicker === null) {
       this.companionTicker = host.every(60_000, () => this.publisher.mark('hud'))

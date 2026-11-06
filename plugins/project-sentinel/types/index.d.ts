@@ -116,6 +116,13 @@ export type ControlRoomSettings = {
    */
   ops: { decisions: boolean; watchers: boolean; scout: WatcherScout }
   /**
+   * The plan's usage over time (features/planUsage.ts). `rate`: keep each window's readings in
+   * the store and show beside its percent how fast it moves (percent per hour over the last six
+   * hours) and when it would reach 100% at that pace, where that comes before the reset. Derived
+   * from Claude Code's own readings, never estimated beyond them; nothing below two readings.
+   */
+  plan: { rate: boolean }
+  /**
    * `liveLoad`: machine-wide CPU and memory in the status bar (runs the sampler). `companion`: the
    * pixel companion on the status bar. `reducedMotion`: still drawings instead of animation.
    */
@@ -128,7 +135,7 @@ export type WatcherScout = 'off' | 'suggest' | 'auto'
 
 export type ControlRoomSystems = Pick<
   ControlRoomSettings,
-  'autopilot' | 'frontier' | 'qa' | 'guard' | 'router' | 'subagents' | 'focus' | 'resources' | 'permissions' | 'progress' | 'answers' | 'cache' | 'ops'
+  'autopilot' | 'frontier' | 'qa' | 'guard' | 'router' | 'subagents' | 'focus' | 'resources' | 'permissions' | 'progress' | 'answers' | 'cache' | 'ops' | 'plan'
 >
 
 export type ControlRoomCustomProfile = { id: string; name: string; createdAt: number; systems: ControlRoomSystems }
@@ -258,7 +265,16 @@ export type PlanFiveHour =
 export type PlanUsageModel = {
   five: PlanFiveHour
   /** Every window read (5-hour, 7-day), for Context → Run and /cr status. */
-  windows: { key: 'five_hour' | 'seven_day'; name: string; percent: number | null; resetsAt: number | null; leftMs: number | null; isReset: boolean }[]
+  windows: {
+    key: 'five_hour' | 'seven_day'
+    name: string
+    percent: number | null
+    resetsAt: number | null
+    leftMs: number | null
+    isReset: boolean
+    /** With `plan.rate`: the window's pace over its recent readings, and when it reaches 100% at that pace (null: the reset comes first, or the pace is not upward). */
+    trend: { perHour: number; fullInMs: number | null } | null
+  }[]
 }
 
 /**

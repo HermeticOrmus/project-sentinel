@@ -6,6 +6,23 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and ver
 `plugins/project-sentinel/.claude-plugin/plugin.json` and in `.claude-plugin/marketplace.json` must
 match. `claude plugin tag plugins/project-sentinel` checks this when tagging a release.
 
+## [Unreleased]
+
+### Added
+
+- **The plan's pace** (`plan.rate`, off by default). Each window's readings are kept in the store under `plan.v1` where
+  they moved (at most one per five minutes; a lower percent or another reset time starts the window afresh), and the
+  detail line says how fast the window moves over its last six hours and when it would be full at that pace, counted
+  from now and only where that comes before the reset: "7-day 24%, +2.0 %/h (100% in 38h), resets …". Nothing is
+  estimated beyond Claude Code's own readings: no pace below two readings, ten minutes between them, or when the last
+  reading is older than fifteen minutes. Turning the setting on mid-session reads the kept readings back.
+
+### Fixed
+
+- The two `register` tests that counted a stand-in `tool.check` handler follow Claude Code 2.1.307's contract, under
+  which `tool.call`'s core runs `tool.check` through the hooks and `$.ui.ask` is a `tool.call` of AskUserQuestion.
+  Measured: the suite passes on 2.1.296 to 2.1.306 and 2.1.307 to 2.1.319 alike now.
+
 ## [1.7.0] - 2026-10-13
 
 A hardening and UX pass driven by real long-run failures: a written handoff held for hours by a Vite preview

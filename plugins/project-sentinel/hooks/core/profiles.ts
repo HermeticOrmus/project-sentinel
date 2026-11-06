@@ -162,6 +162,7 @@ const LABELS: Record<string, string> = {
   'frontier.effort': 'Effort',
   'frontier.subagentEffort': 'Effort for subagents',
   'qa.enabled': 'Release check',
+  'plan.rate': 'Burn rate beside the plan reading',
   'guard.enabled': 'Lazy-exit guard',
   'guard.strictness': 'Guard strictness',
   'guard.maxPerTurn': 'Guard nudges per turn',

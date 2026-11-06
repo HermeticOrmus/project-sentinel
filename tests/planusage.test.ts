@@ -4,7 +4,7 @@ import { Runtime } from '../hooks/app/runtime'
 import * as Views from '../hooks/app/views'
 import { statusText } from '../hooks/app/commands'
 import { defaultSettings } from '../hooks/core/settings'
-import { type PlanUsage, emptyPlanUsage, isTicking, noteAnswered, noteRateLimited, planUsageView, readWindows, windowRows } from '../hooks/features/planUsage'
+import { type PlanUsage, emptyPlanUsage, emptySamples, isTicking, noteAnswered, noteRateLimited, noteSamples, planUsageView, readWindows, samplesOf, trendOf, windowRows } from '../hooks/features/planUsage'
 import { hudCells, hudSegments, planDetail, tiersOf } from '../hooks/ui/hud'
 import { fakeHost } from './fixtures/fake-host'
 import { SESSION, world } from './fixtures/world'
@@ -46,8 +46,8 @@ describe('the five-hour window', () => {
     // A window with no reset time: the reading without a countdown.
     expect(planUsageView(readWindows(emptyPlanUsage(), [five(30, null)], now), now)).toMatchObject({ kind: 'reading', leftMs: null, resetsAt: null })
     expect(windowRows(state, now)).toEqual([
-      { key: 'five_hour', name: '5-hour', percent: 63, resetsAt: now + 2 * H + 14 * M, leftMs: 2 * H + 14 * M, isReset: false },
-      { key: 'seven_day', name: '7-day', percent: 18, resetsAt: now + 30 * H, leftMs: 30 * H, isReset: false },
+      { key: 'five_hour', name: '5-hour', percent: 63, resetsAt: now + 2 * H + 14 * M, leftMs: 2 * H + 14 * M, isReset: false, trend: null },
+      { key: 'seven_day', name: '7-day', percent: 18, resetsAt: now + 30 * H, leftMs: 30 * H, isReset: false, trend: null },
     ])
   })
 
@@ -273,5 +273,150 @@ describe('the 5H reading on the surfaces', () => {
     const ctx = JSON.stringify(await pane.drawn())
     expect(ctx).toContain('Plan usage')
     expect(ctx).toContain('7-day 18%')
+  })
+})
+
+// The burn rate (`plan.rate`, off by default): each window's readings are kept where they moved, and the detail says how
+// fast the window moves over its last six hours and when it would be full at that pace, counted from now. Derived from the
+// readings only: no pace from stale or too few readings.
+
+describe('the burn rate', () => {
+  test('readings are kept where they moved, one per five minutes at most; a lower percent or another reset time starts afresh; the store shape is validated', () => {
+    const t0 = 1_000_000
+    const reset = t0 + 40 * H
+    const at = (ms: number, pct: number, resetsAt: number | null = reset) => readWindows(emptyPlanUsage(), [seven(pct, resetsAt ?? reset)], ms)
+    let kept = noteSamples(emptySamples(), at(t0, 20), t0)
+    expect(kept.sevenDay).toEqual({ resetsAt: reset, points: [{ at: t0, percent: 20 }] })
+    // The same reading, now or an hour later: nothing kept (the object is the same one).
+    expect(noteSamples(kept, at(t0 + M, 20), t0 + M)).toBe(kept)
+    expect(noteSamples(kept, at(t0 + H, 20), t0 + H)).toBe(kept)
+    // A move within five minutes of the last kept reading replaces it.
+    kept = noteSamples(kept, at(t0 + 2 * M, 21), t0 + 2 * M)
+    expect(kept.sevenDay.points).toEqual([{ at: t0 + 2 * M, percent: 21 }])
+    // A move past five minutes is added.
+    kept = noteSamples(kept, at(t0 + 8 * M, 22), t0 + 8 * M)
+    expect(kept.sevenDay.points.map(p => p.percent)).toEqual([21, 22])
+    // A lower percent with the same reset time: a new window, read afresh.
+    kept = noteSamples(kept, at(t0 + 20 * M, 5), t0 + 20 * M)
+    expect(kept.sevenDay).toEqual({ resetsAt: reset, points: [{ at: t0 + 20 * M, percent: 5 }] })
+    // Another reset time: afresh too.
+    kept = noteSamples(kept, at(t0 + 30 * M, 9, reset + 7 * 24 * H), t0 + 30 * M)
+    expect(kept.sevenDay).toEqual({ resetsAt: reset + 7 * 24 * H, points: [{ at: t0 + 30 * M, percent: 9 }] })
+    // A window past its reset is not read into the ring.
+    const past = readWindows(emptyPlanUsage(), [seven(50, t0)], t0 + H)
+    expect(noteSamples(kept, past, t0 + H)).toBe(kept)
+    // The five-hour window is kept the same way, on its own ring.
+    const both = readWindows(emptyPlanUsage(), [five(30, t0 + 3 * H), seven(9, reset + 7 * 24 * H)], t0 + 31 * M)
+    kept = noteSamples(kept, both, t0 + 31 * M)
+    expect(kept.fiveHour.points).toEqual([{ at: t0 + 31 * M, percent: 30 }])
+    // The store's copy, and a corrupt one.
+    expect(samplesOf(JSON.parse(JSON.stringify(kept)))).toEqual(kept)
+    expect(samplesOf({ fiveHour: 'no', sevenDay: { resetsAt: 'x', points: [{ at: 1 }, { at: 2, percent: 3 }] } })).toEqual({
+      fiveHour: { resetsAt: null, points: [] },
+      sevenDay: { resetsAt: null, points: [{ at: 2, percent: 3 }] },
+    })
+    expect(samplesOf(undefined)).toEqual(emptySamples())
+  })
+
+  test('the pace is the slope over the last six hours of readings, from a fresh last reading; the time to full counts from now and only before the reset', () => {
+    const t0 = 10 * H
+    const ring = (points: [number, number][]) => ({ resetsAt: t0 + 100 * H, points: points.map(([at, percent]) => ({ at, percent })) })
+    expect(trendOf(ring([]), t0, null)).toBeNull()
+    expect(trendOf(ring([[t0 - M, 10]]), t0, null)).toBeNull()
+    expect(trendOf(ring([[t0 - 5 * M, 10], [t0, 11]]), t0, null)).toBeNull()
+    // 10% to 20% over two hours: 5 %/h; 80% left is 16 hours from the last reading.
+    expect(trendOf(ring([[t0 - 2 * H, 10], [t0 - H, 15], [t0, 20]]), t0, 40 * H)).toEqual({ perHour: 5, fullInMs: 16 * H })
+    // Ten minutes on, the time to full has moved on with the clock (the same readings).
+    expect(trendOf(ring([[t0 - 2 * H, 10], [t0, 20]]), t0 + 10 * M, 40 * H)).toEqual({ perHour: 5, fullInMs: 16 * H - 10 * M })
+    // A last reading older than fifteen minutes says nothing about now.
+    expect(trendOf(ring([[t0 - 2 * H, 10], [t0, 20]]), t0 + 16 * M, 40 * H)).toBeNull()
+    // The reset comes first: no "full in".
+    expect(trendOf(ring([[t0 - 2 * H, 10], [t0, 20]]), t0, 10 * H)).toEqual({ perHour: 5, fullInMs: null })
+    // Readings older than six hours are left out: the pace is read from the ones inside the span.
+    expect(trendOf(ring([[t0 - 8 * H, 0], [t0 - 2 * H, 10], [t0, 20]]), t0, null)).toEqual({ perHour: 5, fullInMs: 16 * H })
+    // A flat window has a pace of nought and no "full in"; a full one none either.
+    expect(trendOf(ring([[t0 - H, 20], [t0, 20]]), t0, null)).toEqual({ perHour: 0, fullInMs: null })
+    expect(trendOf(ring([[t0 - H, 90], [t0, 100]]), t0, null)).toEqual({ perHour: 10, fullInMs: null })
+    // The time to full is read from the pace as measured, not from the rounded figure shown.
+    const slow = trendOf(ring([[t0 - 2 * H, 0], [t0, 1.08]]), t0, null)
+    expect(slow?.perHour).toBe(0.5)
+    expect(slow?.fullInMs).toBe(Math.round(((100 - 1.08) / 0.54) * H))
+    // Rows carry the pace only with samples; without them the row is as before.
+    const state = readWindows(emptyPlanUsage(), [seven(20, t0 + 40 * H)], t0)
+    expect(windowRows(state, t0).map(r => r.trend)).toEqual([null])
+    const samples = { ...emptySamples(), sevenDay: ring([[t0 - 2 * H, 10], [t0, 20]]) }
+    expect(windowRows(state, t0, samples).map(r => r.trend)).toEqual([{ perHour: 5, fullInMs: 16 * H }])
+  })
+
+  test('with plan.rate on, the detail shows each window\'s pace and the time to full, the readings survive a restart and the session end; off, nothing changes', async () => {
+    const f = fakeHost()
+    f.kept.store['settings.v1'] = { ...defaultSettings(), plan: { ...defaultSettings().plan, rate: true } }
+    const rt = new Runtime()
+    rt.bind(f.host)
+    await rt.onSessionStart({ cwd: '/work', surface: 'terminal', isInteractive: true })
+    await f.advance(200)
+    const sevenReset = f.now() + 80 * H
+    const fiveReset = f.now() + 4 * H
+    const read = (fivePct: number, sevenPct: number) => rt.onMeasure({ context: f.live.usage.context, cost: { usd: 0.6 }, rateLimits: [five(fivePct, fiveReset), seven(sevenPct, sevenReset)], changed: ['rateLimits'] })
+    read(30, 20)
+    expect(planDetail(Views.hudOf(rt).plan, f.now())).not.toContain('%/h')
+    await f.advance(H)
+    read(35, 22)
+    await f.advance(H)
+    read(40, 24)
+    // 7-day: 20% to 24% over two hours, +2.0 %/h, full 38 hours from the last reading (the reset is 78 hours away).
+    // 5-hour: 30% to 40%, +5.0 %/h, full in 12 hours: after its reset in 2 hours, so no "full in".
+    const detail = planDetail(Views.hudOf(rt).plan, f.now())
+    expect(detail).toMatch(/^5-hour 40%, \+5\.0 %\/h, resets .+ · 7-day 24%, \+2\.0 %\/h \(100% in 38h\), resets /)
+    // Ten minutes on, with no new reading, the time to full has moved on with the clock.
+    await f.advance(10 * M)
+    expect(planDetail(Views.hudOf(rt).plan, f.now())).toContain('(100% in 37h 50m)')
+    // Past fifteen minutes without a reading, no pace at all.
+    await f.advance(6 * M)
+    expect(planDetail(Views.hudOf(rt).plan, f.now())).not.toContain('%/h')
+    // The readings are in the store under their own key, and a restart reads them back.
+    const saved = f.kept.store['plan.v1'] as { sevenDay: { points: { percent: number }[] } }
+    expect(saved.sevenDay.points.map(p => p.percent)).toEqual([20, 22, 24])
+    const again = new Runtime()
+    again.bind(f.host)
+    await again.onSessionStart({ cwd: '/work', surface: 'terminal', isInteractive: true })
+    await f.advance(200)
+    expect(again.planSamples.sevenDay.points.length).toBe(3)
+    // A reading right before the session ends is written at the end, not lost in the debounce.
+    again.onMeasure({ context: f.live.usage.context, cost: { usd: 0.6 }, rateLimits: [five(41, fiveReset), seven(26, sevenReset)], changed: ['rateLimits'] })
+    await again.onSessionEnd({ reason: 'prompt_input_exit' } as never)
+    expect((f.kept.store['plan.v1'] as typeof saved).sevenDay.points.map(p => p.percent)).toEqual([20, 22, 24, 26])
+    // Off (the default): no pace in the detail, nothing in the store.
+    const g = fakeHost()
+    g.kept.store['settings.v1'] = defaultSettings()
+    const off = new Runtime()
+    off.bind(g.host)
+    await off.onSessionStart({ cwd: '/work', surface: 'terminal', isInteractive: true })
+    await g.advance(200)
+    off.onMeasure({ context: g.live.usage.context, cost: { usd: 0.6 }, rateLimits: [seven(20, g.now() + 40 * H)], changed: ['rateLimits'] })
+    await g.advance(H)
+    off.onMeasure({ context: g.live.usage.context, cost: { usd: 0.6 }, rateLimits: [seven(24, g.now() + 39 * H)], changed: ['rateLimits'] })
+    await g.advance(5000)
+    expect(planDetail(Views.hudOf(off).plan, g.now())).not.toContain('%/h')
+    expect(g.kept.store['plan.v1']).toBeUndefined()
+  })
+
+  test('turning plan.rate on in the session reads the kept readings back and goes on from there', async () => {
+    const f = fakeHost()
+    f.kept.store['settings.v1'] = defaultSettings()
+    const t0 = f.now()
+    const reset = t0 + 80 * H
+    f.kept.store['plan.v1'] = { fiveHour: { resetsAt: null, points: [] }, sevenDay: { resetsAt: reset, points: [{ at: t0 - 2 * H, percent: 10 }, { at: t0 - H, percent: 15 }] } }
+    const rt = new Runtime()
+    rt.bind(f.host)
+    await rt.onSessionStart({ cwd: '/work', surface: 'terminal', isInteractive: true })
+    await f.advance(200)
+    const read = (pct: number) => rt.onMeasure({ context: f.live.usage.context, cost: { usd: 0.6 }, rateLimits: [five(30, t0 + 3 * H), seven(pct, reset)], changed: ['rateLimits'] })
+    read(20)
+    expect(rt.planSamples.sevenDay.points).toEqual([])
+    rt.update(s => void (s.plan = { ...s.plan, rate: true }))
+    await f.advance(200)
+    expect(rt.planSamples.sevenDay.points.map(p => p.percent)).toEqual([10, 15, 20])
+    expect(planDetail(Views.hudOf(rt).plan, f.now())).toContain('+5.0 %/h')
   })
 })

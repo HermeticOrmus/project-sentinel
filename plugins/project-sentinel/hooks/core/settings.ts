@@ -82,6 +82,7 @@ export const SYSTEM_KEYS = [
   'answers',
   'cache',
   'ops',
+  'plan',
 ] as const satisfies readonly (keyof SystemSettings)[]
 
 export const PERMISSION_STATES: readonly PermissionState[] = ['default', 'ask', 'deny']
@@ -168,6 +169,7 @@ export function classicSystems(): SystemSettings {
     answers: { style: 'standard' },
     cache: { keepWarm: false, maxIdleMinutes: 120, minTokens: 20_000, guardModelSwitch: true, stablePolicies: true, coldResume: true, coldResumeTokens: 100_000 },
     ops: { decisions: true, watchers: true, scout: 'suggest' },
+    plan: { rate: false },
   }
 }
 
@@ -250,6 +252,7 @@ function normalizeSystems(raw: unknown, base: SystemSettings): SystemSettings {
   const an = isRecord(r.answers) ? r.answers : {}
   const ca = isRecord(r.cache) ? r.cache : {}
   const op = isRecord(r.ops) ? r.ops : {}
+  const pl = isRecord(r.plan) ? r.plan : {}
 
   const permissions = {} as Record<PermissionCategory, PermissionState>
   for (const category of PERMISSION_CATEGORIES) permissions[category] = permissionStateOf(pe[category], base.permissions[category])
@@ -329,6 +332,7 @@ function normalizeSystems(raw: unknown, base: SystemSettings): SystemSettings {
       watchers: bool(op.watchers, base.ops.watchers),
       scout: pick(op.scout, WATCHER_SCOUTS, base.ops.scout),
     },
+    plan: { rate: bool(pl.rate, base.plan.rate) },
   }
 }
 
@@ -403,6 +407,7 @@ export function systemsOf(settings: Settings): SystemSettings {
     answers: settings.answers,
     cache: settings.cache,
     ops: settings.ops,
+    plan: settings.plan,
   }
 }
 

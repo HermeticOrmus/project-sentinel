@@ -231,7 +231,10 @@ export function planDetail(plan: HudModel['plan'], now: number): string {
   if (five.kind === 'absent') return 'No five-hour window on this account (an API key, or a plan without one)'
   if (five.kind === 'pending') return 'No reading yet: it comes with the first response'
   const resets = (at: number | null, leftMs: number | null) => (at === null ? '' : `, resets ${fmt.when(at, now)}${leftMs === null ? '' : ` (in ${fmt.countdown(leftMs)})`}`)
-  const parts = plan.windows.map(w => (w.isReset ? `${w.name} reset at ${fmt.when(w.resetsAt, now)}, no reading of the new window yet` : `${w.name} ${fmt.percent(w.percent)}${resets(w.resetsAt, w.leftMs)}`))
+  // With `plan.rate`: the pace over the recent readings, and when the window is full at that pace (only where that comes before its reset).
+  const pace = (w: HudModel['plan']['windows'][number]) =>
+    w.trend === null ? '' : `, ${w.trend.perHour >= 0 ? '+' : ''}${w.trend.perHour.toFixed(1)} %/h${w.trend.fullInMs === null ? '' : ` (100% in ${fmt.countdown(w.trend.fullInMs)})`}`
+  const parts = plan.windows.map(w => (w.isReset ? `${w.name} reset at ${fmt.when(w.resetsAt, now)}, no reading of the new window yet` : `${w.name} ${fmt.percent(w.percent)}${pace(w)}${resets(w.resetsAt, w.leftMs)}`))
   if (five.kind === 'limited') {
     const which = five.window === 'seven_day' ? '7-day limit reached' : five.window === null ? 'A request was refused on the rate limit' : '5-hour limit reached'
     return [`${which}${resets(five.resetsAt, five.leftMs)}`, ...parts.filter(p => !(five.window === 'five_hour' && p.startsWith('5-hour')))].join(' · ')

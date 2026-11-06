@@ -239,7 +239,7 @@ export function behaviorPage(kit: Kit, pane: PaneModel): RenderElement {
         title: 'Model router',
         accent,
         aside: s.router.strategy !== 'off' && pane.router.lastDecision !== null ? `Last: ${pane.router.lastDecision}` : undefined,
-        footer: s.router.strategy === 'off' ? undefined : 'Never downgrades while Frontier Max is on. Switches only while the context is small.',
+        footer: s.router.strategy === 'off' ? undefined : 'Never downgrades while Frontier Max is on, except Explore agents under plan economy. Switches only while the context is small.',
         rows: k => [
           row(k, {
             key: 'ro-strategy',

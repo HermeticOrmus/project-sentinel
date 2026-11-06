@@ -9,7 +9,7 @@
  *   4. Context Autopilot handoff                               — suspends guard/router
  *   5. Resource Governor                                       — how, not whether
  *   6. Subagent Control                                        — hard spawn limits
- *   7. Frontier Max                                            — vetoes economy downgrades
+ *   7. Frontier Max                                            — vetoes router downgrades (plan economy's Explore model excepted)
  *   8. No-Lazy-Exit Guard
  *   9. Model Router
  *  10. Focus View                                              — presentation only
@@ -18,6 +18,7 @@
 import type { ModelEffort } from 'claude-code'
 
 import { type AutopilotState, isHandoffActive } from '../features/autopilot'
+import type { PlanPressure } from '../features/planGate'
 import * as prompts from '../features/prompts'
 import { type Ceilings, type PressureLevel, ceilingsOf } from '../features/resources/pressure'
 import type { Settings } from './settings'
@@ -27,6 +28,8 @@ export type Live = {
   autopilotThreshold: number | null
   pressure: PressureLevel
   permissionMode: string | undefined
+  /** The plan gates' pressure (`normal` while they are off): from `economy` up, the run saves tokens. */
+  planPressure: PlanPressure
 }
 
 export type Effective = {
@@ -35,6 +38,8 @@ export type Effective = {
   guard: { isActive: boolean; reason: string | null }
   router: { isActive: boolean; isMainLoop: boolean; isSubagents: boolean; reason: string | null }
   subagents: { mode: Settings['subagents']['mode']; limit: number }
+  /** Plan economy (features/planGate.ts): a lower hand-off point, light Explore agents, no forks; the main loop's next turn is not routed (the running one keeps its model). */
+  economy: { isActive: boolean }
   resources: { ceilings: Ceilings | null }
   autopilot: { isActive: boolean; isHandoff: boolean }
 }
@@ -50,9 +55,12 @@ export function effective(settings: Settings, live: Live): Effective {
   else if (isHandoff) guardReason = 'Paused during the handoff'
   else if (isPlan) guardReason = 'Paused in plan mode'
 
+  const isEconomy = settings.plan.gates && live.planPressure !== 'normal'
+
   let routerReason: string | null = null
   if (settings.router.strategy === 'off') routerReason = 'off'
   else if (isHandoff) routerReason = 'main conversation held on the session model during the handoff'
+  else if (isEconomy) routerReason = 'main conversation held on the session model under plan economy'
 
   return {
     frontier: { isActive: settings.frontier.enabled, effort: settings.frontier.enabled ? EFFORT[settings.frontier.effort] : null },
@@ -65,6 +73,7 @@ export function effective(settings: Settings, live: Live): Effective {
       reason: routerReason,
     },
     subagents: { mode: settings.subagents.mode, limit: settings.subagents.limit },
+    economy: { isActive: isEconomy },
     resources: { ceilings: ceilingsOf(settings.resources) },
     autopilot: { isActive: settings.autopilot.enabled, isHandoff },
   }

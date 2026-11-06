@@ -550,6 +550,7 @@ export class Runtime {
       autopilotThreshold: Autopilot.handoffPoint(this.autopilot),
       pressure: this.monitor.pressure.level,
       permissionMode: this.permissionMode,
+      planPressure: this.settings.plan.gates ? this.planGate.pressure : 'normal',
     })
   }
 
@@ -783,10 +784,17 @@ export class Runtime {
     if (this.settings.ui.toasts) for (const id of shape.unlocked) this.host?.toast(`Achievement: ${Quest.achievementName(id)}`, 5000)
   }
 
-  /** The policy sections in force, with what this session offers. */
+  /**
+   * The policy sections in force, with what this session offers. The hand-off point named is the
+   * person's own (policies are a function of the settings, never of a live figure): plan economy's
+   * lower point reaches Claude with the hand-off request itself, and never rewrites the prompt.
+   */
   policies(): ReturnType<typeof policySections> {
-    return policySections(this.settings, this.autopilot.threshold, { milestonesTool: this.milestonesTool, nativeOutputStyle: this.nativeOutputStyle })
+    return policySections(this.settings, this.ownThreshold ?? this.autopilot.threshold, { milestonesTool: this.milestonesTool, nativeOutputStyle: this.nativeOutputStyle })
   }
+
+  /** The hand-off point from the person's settings alone (`configureAutopilot`), before plan economy lowers it. */
+  private ownThreshold: number | null = null
 
   private async registerCommands(): Promise<void> {
     const host = this.host
@@ -1495,21 +1503,32 @@ export class Runtime {
     const before = this.planGate
     this.planGate = out.model
     for (const e of out.effects) {
-      if (e.kind === 'pressure') this.trace(`plan gates: ${e.from} → ${e.to}${e.percent === null ? '' : ` (7-day ${e.percent}%)`}`)
+      if (e.kind === 'pressure') {
+        this.trace(`plan gates: ${e.from} → ${e.to}${e.percent === null ? '' : ` (7-day ${e.percent}%)`}`)
+        // Economy sets the hand-off point and the router; both read the pressure through `effective()`.
+        this.configureAutopilot()
+      }
     }
     if (before !== out.model) this.publisher.mark('hud', 'pane')
   }
 
   configureAutopilot(): void {
     const a = this.settings.autopilot
-    const { threshold, isClamped } = Autopilot.resolveThreshold({
+    const set = Autopilot.resolveThreshold({
       mode: a.thresholdMode,
       tokens: a.thresholdTokens,
       percent: a.thresholdPercent,
       window: this.usage.window,
       autoCompactAt: this.autoCompactAt,
     })
-    this.stepAutopilot({ kind: 'configure', enabled: a.enabled, threshold, isClamped })
+    // Plan economy: the hand-off point is the economy's, where that is lower than the person's; the saved setting stays theirs.
+    const economy = this.effective().economy.isActive
+      ? Autopilot.resolveThreshold({ mode: 'tokens', tokens: this.settings.plan.economy.thresholdTokens, percent: a.thresholdPercent, window: this.usage.window, autoCompactAt: this.autoCompactAt })
+      : null
+    const isEconomy = economy !== null && economy.threshold !== null && set.threshold !== null && economy.threshold < set.threshold
+    const { threshold, isClamped } = isEconomy ? economy : set
+    this.ownThreshold = set.threshold
+    this.stepAutopilot({ kind: 'configure', enabled: a.enabled, threshold, isClamped, isEconomy })
   }
 
   /** A fresh context started working (or ended a turn read in): Autopilot gives it room from its size now. */
@@ -2264,7 +2283,8 @@ export class Runtime {
 
   private planRoute(text: string): void {
     const eff = this.effective()
-    if (!eff.router.isMainLoop) {
+    // Under plan economy the next turn is not routed (`router.reason` says so); a running turn keeps the model it started on.
+    if (!eff.router.isMainLoop || eff.economy.isActive) {
       this.router.turnModel = null
       return
     }
@@ -2882,6 +2902,7 @@ export class Runtime {
     const isWorkflowAgent = (e as { workflow?: unknown }).workflow !== undefined
     await this.refreshAgents()
     // From here to the reservation nothing awaits: two spawns at once see each other's slot.
+    const eco = this.effective().economy.isActive
     const decision = decideSpawn({
       mode: s.mode,
       limit: s.limit,
@@ -2891,6 +2912,8 @@ export class Runtime {
       type: clean(e.subagentType, 40),
       description: clean(e.description, 80),
       isAllowedForSession: this.agents.allowAll,
+      isFork: e.fork,
+      forks: eco ? this.settings.plan.economy.forks : 'allow',
     })
     if (decision.action === 'deny') {
       this.agents.denied += 1
@@ -2914,7 +2937,7 @@ export class Runtime {
     }
     this.agents.spawned += 1
     const eff = this.effective()
-    if (eff.router.isSubagents && !isWorkflowAgent) {
+    if ((eff.router.isSubagents || eff.economy.isActive) && !isWorkflowAgent) {
       const route = routeSubagent({
         router: this.settings.router,
         subagentType: e.subagentType,
@@ -2925,8 +2948,10 @@ export class Runtime {
         sessionModel: this.sessionModel,
         unavailable: this.router.unavailable,
         known: this.router.known,
+        ...(eff.economy.isActive ? { economyExplore: this.settings.plan.economy.explore } : {}),
       })
-      this.router.lastDecision = `subagent: ${route.why}`
+      // With the router off, economy routes Explore agents alone: the others leave no "router off" decision behind.
+      if (route.model !== null || eff.router.isSubagents) this.router.lastDecision = `subagent: ${route.why}`
       if (route.model !== null) return { model: route.model, isReserved }
     }
     this.publisher.mark('pane', 'hud')

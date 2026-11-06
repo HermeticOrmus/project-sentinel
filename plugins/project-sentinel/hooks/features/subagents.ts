@@ -17,6 +17,10 @@ export type SpawnInput = {
   description: string
   /** Spawns the person allowed for the rest of the session (Ask → "Allow all"). */
   isAllowedForSession: boolean
+  /** A fork: an agent that inherits the whole context (`agent.spawn`'s `fork`). */
+  isFork?: boolean
+  /** Plan economy refuses forks (`plan.economy.forks`): a fork re-sends the parent's whole context on every call. */
+  forks?: 'allow' | 'deny'
 }
 
 export type SpawnDecision =
@@ -24,16 +28,25 @@ export type SpawnDecision =
   | { action: 'deny'; reason: string }
   | { action: 'ask'; question: string }
 
+const FORK_REFUSED: SpawnDecision = {
+  action: 'deny',
+  reason:
+    'Control Room: plan economy refuses a fork, which carries this whole context on every call. Start a fresh agent (general-purpose or Explore) with a narrow brief: the goal, the files to read, what to return.',
+}
+
 export function decideSpawn(input: SpawnInput): SpawnDecision {
   if (input.isTeammate && !input.countTeammates) return { action: 'allow' }
+  // Blocked subagents are said first: the fresh agent a fork refusal names would be refused too.
+  if (input.mode === 'block') {
+    return {
+      action: 'deny',
+      reason: 'Control Room: subagents are disabled in this session. Do the work directly in the main conversation.',
+    }
+  }
+  if (input.isFork === true && input.forks === 'deny') return FORK_REFUSED
   switch (input.mode) {
     case 'unrestricted':
       return { action: 'allow' }
-    case 'block':
-      return {
-        action: 'deny',
-        reason: 'Control Room: subagents are disabled in this session. Do the work directly in the main conversation.',
-      }
     case 'ask':
       if (input.isAllowedForSession) return { action: 'allow' }
       return {

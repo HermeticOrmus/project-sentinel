@@ -70,6 +70,8 @@ export type Autopilot = {
   threshold: number | null
   /** True when the threshold was lowered under Claude Code's own auto-compact point. */
   isClamped: boolean
+  /** True while the threshold is plan economy's (`plan.economy.thresholdTokens`), not the person's own. */
+  isEconomy: boolean
   triggeredTokens: number | null
   triggeredAt: number | null
   /** When the handoff prompt was submitted: the handoff file must be newer. */
@@ -145,7 +147,7 @@ export type AutopilotConfig = {
 }
 
 export type AutopilotEvent =
-  | { kind: 'configure'; enabled: boolean; threshold: number | null; isClamped: boolean }
+  | { kind: 'configure'; enabled: boolean; threshold: number | null; isClamped: boolean; isEconomy?: boolean }
   | { kind: 'context'; tokens: number; window: number | undefined; isInTurn: boolean; now: number }
   | {
       kind: 'turnComplete'
@@ -224,6 +226,7 @@ export function initialAutopilot(): Autopilot {
     state: 'off',
     threshold: null,
     isClamped: false,
+    isEconomy: false,
     triggeredTokens: null,
     triggeredAt: null,
     handoffSince: null,
@@ -535,6 +538,10 @@ export function recover(model: Autopilot, record: AutopilotRecord, ctx: { sessio
   }
 }
 
+/** What raises the point: the person's setting, or, while plan economy holds it down, the next 7-day window. */
+const raiseWords = (model: Pick<Autopilot, 'isEconomy'>, why = ''): string =>
+  model.isEconomy ? `The point is plan economy's (plan.economy.thresholdTokens); it lifts with the next 7-day window.` : `Raise the handoff point in Context${why}.`
+
 export function step(model: Autopilot, event: AutopilotEvent, cfg: AutopilotConfig): Step {
   const none: AutopilotEffect[] = []
 
@@ -542,7 +549,7 @@ export function step(model: Autopilot, event: AutopilotEvent, cfg: AutopilotConf
     if (!event.enabled) {
       return { model: set(initialAutopilot(), { completed: model.completed, note: 'Off' }), effects: none }
     }
-    const next = set(model, { threshold: event.threshold, isClamped: event.isClamped })
+    const next = set(model, { threshold: event.threshold, isClamped: event.isClamped, isEconomy: event.isEconomy === true })
     if (model.state === 'off') {
       return { model: set(next, { state: 'armed', note: 'Watching the context' }), effects: none }
     }
@@ -564,7 +571,7 @@ export function step(model: Autopilot, event: AutopilotEvent, cfg: AutopilotConf
           effects: [
             {
               kind: 'notify',
-              text: `This fresh context reached ${kTokens(event.tokens)} still reading itself in, past its ${kTokens(point)} handoff point, so Autopilot waits for you instead of handing off again. Raise the handoff point in Context.`,
+              text: `This fresh context reached ${kTokens(event.tokens)} still reading itself in, past its ${kTokens(point)} handoff point, so Autopilot waits for you instead of handing off again. ${raiseWords(model)}`,
               level: 'error',
             },
           ],
@@ -735,7 +742,7 @@ export function step(model: Autopilot, event: AutopilotEvent, cfg: AutopilotConf
         effects: [
           {
             kind: 'notify',
-            text: `This fresh context started working at ${kTokens(event.tokens)}, close to the ${kTokens(model.threshold)} handoff point, so it hands off at ${kTokens(point)} to leave room for work. Raise the handoff point in Context to give each context more room.`,
+            text: `This fresh context started working at ${kTokens(event.tokens)}, close to the ${kTokens(model.threshold)} handoff point, so it hands off at ${kTokens(point)} to leave room for work. ${raiseWords(model, ' to give each context more room')}`,
             level: 'warn',
           },
         ],

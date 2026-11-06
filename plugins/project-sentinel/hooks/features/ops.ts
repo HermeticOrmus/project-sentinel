@@ -668,12 +668,22 @@ export function checkBudget(b: Budget, m: BudgetMetrics): BudgetCheck {
   return { near, reached, words }
 }
 
-export function setBudget(ops: RunOps, patch: Partial<Pick<Budget, 'costUsd' | 'durationMs' | 'handoffs' | 'atLimit'>> | null, now: number): RunOps {
+/** A budget's limits in a few words: "handoffs 4, ask". */
+export function budgetWords(b: Pick<Budget, 'costUsd' | 'durationMs' | 'handoffs' | 'atLimit'>): string {
+  const parts: string[] = []
+  if (b.costUsd !== null) parts.push(`cost $${b.costUsd.toFixed(b.costUsd % 1 === 0 ? 0 : 2)}`)
+  if (b.durationMs !== null) parts.push(`time ${hoursWords(b.durationMs)}`)
+  if (b.handoffs !== null) parts.push(`handoffs ${b.handoffs}`)
+  return `${parts.join(', ')}, ${b.atLimit}`
+}
+
+/** `text`: the log's words for a budget set (the person's by default; the settings' default names itself). */
+export function setBudget(ops: RunOps, patch: Partial<Pick<Budget, 'costUsd' | 'durationMs' | 'handoffs' | 'atLimit'>> | null, now: number, text = 'Run budget set'): RunOps {
   if (patch === null) return logged({ ...ops, budget: null }, now, 'Run budget removed')
   const base: Budget = ops.budget ?? { costUsd: null, durationMs: null, handoffs: null, atLimit: 'ask', warned: [], reached: [], approved: [] }
   const merged: Budget = { ...base, ...patch }
   // A limit raised or removed is said again when it is next near or reached.
   const kept = (k: BudgetKey) => (k === 'cost' ? merged.costUsd === base.costUsd : k === 'time' ? merged.durationMs === base.durationMs : merged.handoffs === base.handoffs)
   const budget = budgetOf({ ...merged, warned: merged.warned.filter(kept), reached: merged.reached.filter(kept), approved: merged.approved.filter(kept) })
-  return logged({ ...ops, budget }, now, budget === null ? 'Run budget removed' : 'Run budget set')
+  return logged({ ...ops, budget }, now, budget === null ? 'Run budget removed' : text)
 }

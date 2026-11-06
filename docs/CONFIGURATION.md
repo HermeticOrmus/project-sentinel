@@ -246,10 +246,12 @@ layer works.
 | `decisions` | on / off | on | *Let Claude leave decisions here* (Needs review): Claude is offered the `decision_request` tool for a choice that is yours and need not stop the work. Off, Claude asks you directly. Turned off mid-session, the tool stays offered until the session ends and answers that the inbox is off. |
 | `watchers` | on / off | on | *Watchers*: park the run until a time, then wake Claude. Off, nothing parks or wakes the run (`/cr watch` says so). |
 | `scout` | `off` / `suggest` / `auto` | `suggest` | *Suggestions* (the Watcher Scout): after a turn in which Claude evidently waits for a future result (a milestone marked waiting, or a sentence of its own pairing a check with a time), `suggest` offers a watcher on the status bar's alert line; `auto` (*Arm explicit waits*) arms one when the time is explicit and unambiguous, and suggests the rest; `off` never does. No model is asked. |
+| `budget` | `null`, or `{ costUsd, durationMs, handoffs, atLimit }` | `null` | The run budget every new run starts with, the limits of the table below: `costUsd` in US dollars (0.01 to 100,000, rounded to cents), `durationMs` in milliseconds (one minute to thirty days), `handoffs` (1 to 50; more reads as 50), each `null` for no limit, and one out of range reads as no limit; `atLimit` `notify` / `ask` / `finish`, `ask` by default. A record with no limit reads as `null`. It is applied when a run starts (the run's log says "Run budget from the settings"); a budget set in Operations or with `/cr budget` overrides it for that run, and a run resumed with Claude Code's own resume keeps the budget it had. A profile that carries one applies it from the next run. |
 
 What the person sets up in Operations is kept with the run, not in the settings: the Mission
 Queue, the decisions and their answers, the watchers and the **run budget**. A run budget is set in
-Operations → *Run budget* or with `/cr budget`, and is off until you set one:
+Operations → *Run budget* or with `/cr budget`, and is off until you set one or `budget` above gives every
+new run one:
 
 | Limit | Values | Notes |
 | --- | --- | --- |

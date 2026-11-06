@@ -113,8 +113,12 @@ export type ControlRoomSettings = {
    * `decision_request` tool, so a non-urgent choice waits in Needs review instead of
    * interrupting. `watchers`: parking the run until a time. `scout`: after a turn, suggest a
    * watcher when Claude evidently waits for a future result (or arm one for an explicit wait).
+   * `budget`: the run budget every new run starts with (null, the default: none), the same limits
+   * `/cr budget` sets: cost in US dollars, time in ms, Autopilot handoffs, and what happens at a
+   * limit (`ask` asks once and goes on with your yes; nothing ever stops by itself). A budget set
+   * in Operations or with `/cr budget` overrides it for that run.
    */
-  ops: { decisions: boolean; watchers: boolean; scout: WatcherScout }
+  ops: { decisions: boolean; watchers: boolean; scout: WatcherScout; budget: { costUsd: number | null; durationMs: number | null; handoffs: number | null; atLimit: 'notify' | 'ask' | 'finish' } | null }
   /**
    * The plan's usage over time (features/planUsage.ts). `rate`: keep each window's readings in
    * the store and show beside its percent how fast it moves (percent per hour over the last six

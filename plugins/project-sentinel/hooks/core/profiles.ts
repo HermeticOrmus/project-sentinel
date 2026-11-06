@@ -7,6 +7,7 @@
  * as modified. Pure: no engine access.
  */
 
+import { type Budget, budgetWords } from '../features/ops'
 import { tokens as fmtTokens } from './format'
 import {
   type CustomProfile,
@@ -203,6 +204,7 @@ const LABELS: Record<string, string> = {
   'ops.decisions': 'Decision Inbox',
   'ops.watchers': 'Watchers',
   'ops.scout': 'Watcher suggestions',
+  'ops.budget': 'Default run budget',
 }
 
 for (const category of PERMISSION_CATEGORIES) {
@@ -237,8 +239,16 @@ const UNITS: Record<string, (n: number) => string> = {
   'cache.coldResumeTokens': n => fmtTokens(n),
 }
 
+const isBudget = (v: unknown): v is Pick<Budget, 'costUsd' | 'durationMs' | 'handoffs' | 'atLimit'> =>
+  typeof v === 'object' && v !== null && 'atLimit' in v && 'handoffs' in v && 'costUsd' in v && 'durationMs' in v
+
+/** Settings shown as one value in a diff, though they are records: the default run budget. */
+const LEAF_PATHS: ReadonlySet<string> = new Set(['ops.budget'])
+
 /** A stored value as the panel shows it: "On", "Maximum", "70%", "700k". */
 function show(path: string, v: unknown): string {
+  if (v === undefined) return '—'
+  if (path === 'ops.budget') return v === null ? 'None' : isBudget(v) ? budgetWords(v) : '—'
   if (typeof v === 'boolean') return v ? 'On' : 'Off'
   if (typeof v === 'number') return UNITS[path]?.(v) ?? String(v)
   if (typeof v === 'string') return VALUE_LABELS[path]?.[v] ?? (/^[a-z]+$/.test(v) ? v.charAt(0).toUpperCase() + v.slice(1) : v)
@@ -246,7 +256,7 @@ function show(path: string, v: unknown): string {
 }
 
 function flatten(prefix: string, value: unknown, out: Map<string, unknown>) {
-  if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+  if (typeof value === 'object' && value !== null && !Array.isArray(value) && !LEAF_PATHS.has(prefix)) {
     for (const [k, v] of Object.entries(value)) flatten(prefix === '' ? k : `${prefix}.${k}`, v, out)
   } else {
     out.set(prefix, value)

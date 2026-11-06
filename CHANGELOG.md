@@ -27,9 +27,14 @@ match. `claude plugin tag plugins/project-sentinel` checks this when tagging a r
   lower than the person's (their saved setting is untouched and comes back with the next window), Explore agents get
   `plan.economy.explore` (past the Frontier Max floor and with the router off), a fork is refused with a reason that names a
   fresh agent when `plan.economy.forks` is `deny`, and the main conversation keeps its model. Park and hold follow.
+- **A default run budget** (`ops.budget`, null by default). Every new run starts with it (the limits `/cr budget` sets:
+  cost, time, handoffs, and what happens at one), said in the run's log as "Run budget from the settings"; a budget set in
+  Operations or with `/cr budget` overrides it for the run, and a run resumed with Claude Code's own resume keeps the
+  budget it had. A profile that carries one applies it from the next run.
 
 ### Fixed
 
+- A new run is saved at once: a reload of the plugin within the save's delay (1.5 s) no longer starts a second run.
 - The two `register` tests that counted a stand-in `tool.check` handler follow Claude Code 2.1.307's contract, under
   which `tool.call`'s core runs `tool.check` through the hooks and `$.ui.ask` is a `tool.call` of AskUserQuestion.
   Measured: the suite passes on 2.1.296 to 2.1.306 and 2.1.307 to 2.1.319 alike now.

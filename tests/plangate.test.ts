@@ -229,7 +229,8 @@ describe('the plan gates', () => {
     await f.advance(16 * M)
     expect(rt.planGate.pressure).toBe('normal')
     expect(f.kept.traces.filter(t => t.startsWith('plan gates:'))).toEqual(['plan gates: normal → parking (7-day 90%)', 'plan gates: parking → hold (7-day 90%)', 'plan gates: hold → normal'])
-    expect(f.kept.submitted).toEqual([])
+    // The park's own notes prompt is the one thing that went (tests/planpark.test.ts has the park).
+    expect(f.kept.submitted.filter(t => !t.startsWith('Project Sentinel · park the run ('))).toEqual([])
   })
 
   test("the runtime after a reload: the engine's figure read at startup is not fresh until a response carries it, or it moves", async () => {

@@ -306,9 +306,10 @@ export type PlanUsageModel = {
 
 /**
  * `waiting`: a written handoff waits for background work (the Handoff Supervisor's ways out). `stuck`:
- * a handoff step that has not moved on (the supervisor found it stalled).
+ * a handoff step that has not moved on (the supervisor found it stalled). `plan`: the plan hold
+ * (`plan.holdAt`) keeps automated turns until the 7-day window's reset.
  */
-export type HudAlertKind = 'pending' | 'awaiting' | 'waiting' | 'stuck' | 'load' | 'watcher' | 'suggest' | 'budget' | 'held'
+export type HudAlertKind = 'pending' | 'awaiting' | 'waiting' | 'stuck' | 'load' | 'watcher' | 'suggest' | 'budget' | 'held' | 'plan'
 
 export type HudAlert = {
   kind: HudAlertKind
@@ -963,7 +964,8 @@ export type WatcherView = {
   /** Why it will not wake by itself, when it will not ("This run changed since it was armed: 2 turns"). */
   needs: string | null
   outcome: string | null
-  source: 'person' | 'scout' | 'carried'
+  /** Who armed it: the person, the Scout, a carried one from an earlier run, or the plan gates (a park until the 7-day reset). */
+  source: 'person' | 'scout' | 'carried' | 'plan'
 }
 
 /** One of Claude Code's own scheduled wake-ups (ScheduleWakeup, CronCreate), shown beside the watchers, read only. */

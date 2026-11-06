@@ -26,7 +26,18 @@ match. `claude plugin tag plugins/project-sentinel` checks this when tagging a r
 - **Plan economy's effects.** From `economy` up: the hand-off point drops to `plan.economy.thresholdTokens` where that is
   lower than the person's (their saved setting is untouched and comes back with the next window), Explore agents get
   `plan.economy.explore` (past the Frontier Max floor and with the router off), a fork is refused with a reason that names a
-  fresh agent when `plan.economy.forks` is `deny`, and the main conversation keeps its model. Park and hold follow.
+  fresh agent when `plan.economy.forks` is `deny`, and the main conversation keeps its model.
+- **The plan's park and hold.** From `parking` (`plan.parkAt`): a fresh watcher is armed at the 7-day window's reset
+  (`source: plan`; Watchers on and a run started) and Claude is asked once, at the next boundary, to write the notes the
+  wake needs (asked again after a reload that lost the ask, or once more if not taken); the run sleeps until the reset
+  and resumes in a fresh context, the person's own turns meanwhile asked to keep the notes current. The pressure gone
+  before the reset wakes it here in its own words, or dismisses a park that never began. From `hold` (`plan.holdAt`):
+  queued work and watcher wakes wait for the reset (the park's one notes turn still goes), told apart from the run
+  budget's hold in Operations and the status bar, and a message the person types runs with one `plan` note per hold. A
+  watcher held by either hold wakes once that hold is gone (the plan's at the reset it names or with the gates off, a
+  reload included, though a hold that ended while Claude Code was closed waits for the person as an overdue watcher does;
+  the budget's with *Continue anyway* or a raised limit, which now free them), unless the run changed meanwhile, as for
+  any watcher.
 - **A default run budget** (`ops.budget`, null by default). Every new run starts with it (the limits `/cr budget` sets:
   cost, time, handoffs, and what happens at one), said in the run's log as "Run budget from the settings"; a budget set in
   Operations or with `/cr budget` overrides it for the run, and a run resumed with Claude Code's own resume keeps the

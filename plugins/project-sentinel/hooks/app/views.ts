@@ -55,6 +55,7 @@ import { answerStyleLabel } from '../core/answers'
 import { LONG_CALL_MS, chipsOf, headlineOf, runNowOf, trackOf } from './headline'
 import type { Runtime } from './runtime'
 import { suggestionWords } from '../features/scout'
+import { clockAhead } from '../features/when'
 
 function contextTone(rt: Runtime): Tone {
   const tokens = rt.usage.tokens
@@ -257,6 +258,10 @@ function alertOf(rt: Runtime, ops: HudOps | null): HudAlert | null {
   }
   if (rt.ops.held !== null) return { kind: 'held', text: 'Your message was not sent: it is kept in Control Room', tone: 'warn' }
   if (rt.ops.budgetHeld !== null) return { kind: 'budget', text: `Run budget reached: ${rt.ops.budgetHeld} waits for you`, tone: 'warn' }
+  const hold = rt.planHold()
+  if (rt.ops.planHeld !== null && hold !== null) {
+    return { kind: 'plan', text: `Plan at ${hold.percent}%: ${rt.ops.planHeld} waits for the 7-day reset${hold.resetsAt === null ? '' : ` at ${clockAhead(hold.resetsAt, rt.clock())}`}`, tone: 'warn', ref: rt.ops.planHeld.endsWith("'s wake") ? 'ops-watchers' : 'ops-queue' }
+  }
   const sug = rt.ops.suggestion
   if (sug !== null) return { kind: 'suggest', text: `Claude seems to be waiting for a future result. ${suggestionWords(sug, rt.clock())}`, tone: 'info', ref: sug.id, hasTime: sug.when !== null && sug.when.kind === 'at' }
   return null

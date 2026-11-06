@@ -45,6 +45,15 @@ export const COLD = {
 
 /** How long after a boundary Project Sentinel's own prompt goes, so the turn's end settles first. */
 const BOUNDARY_MS = 700
+
+/** The `needs` a watcher held by the plan hold carries: it stands only while the hold does (`wakeDue` reads it against the hold). */
+const PLAN_NEEDS = 'The 7-day plan window is at '
+
+/** The `needs` a watcher held by the run budget carries, likewise. */
+const BUDGET_NEEDS = 'The run budget is reached: the wake waits for you.'
+
+/** Within this long of the reset the plan's watcher is left to its own time (the minute look and the timer may land either side of it). */
+const UNPARK_GRACE_MS = 60_000
 /** Compact first waits this long after the prompt it replaces is dropped, then asks Claude Code to compact. */
 const COMPACT_AFTER_DROP_MS = 600
 /** How many times Compact first asks while Claude Code still counts the dropped prompt as a turn under way. */
@@ -157,12 +166,22 @@ export class Operations {
         ops = Ops.patchWatcher(ops, w.id, { status: 'due', needs: `Watcher was due ${agoWords(now - w.wakeAt)}.` })
         this.rt.trace(`ops: ${w.id} was due ${agoWords(now - w.wakeAt)} (Claude Code was not running): it waits for you`)
       }
+      // Held by the plan, the hold ended while Claude Code was closed: it waits for the person too, as an overdue armed one
+      // does, rather than waking by itself from the first tick.
+      else if (w.status === 'due' && w.needs?.startsWith(PLAN_NEEDS) === true && w.heldUntil !== null && w.heldUntil < now - TICK_MS) {
+        ops = Ops.patchWatcher(ops, w.id, { needs: `Watcher was due ${agoWords(now - w.heldUntil)}, when the plan's hold ended.`, heldUntil: null })
+        this.rt.trace(`ops: ${w.id}'s hold ended ${agoWords(now - w.heldUntil)} (Claude Code was not running): it waits for you`)
+      }
     }
     if (sending.length + answering.length > 0) this.rt.trace(`ops: ${[...sending, ...answering].join(', ')} were on their way when the last runtime ended: marked unsure, not sent again`)
     this.commit(ops)
     await this.restoreAgents()
     await this.refreshNotes(true)
     this.findForeign()
+    // The gates off in the settings at load (turned off before a reload, or on another machine with the settings synced): a
+    // watcher the plan held is released on a boundary of its own, as when the gates go off in a live session; after the notes
+    // were read, so a fresh wake reads a checked handoff file.
+    if (!this.rt.settings.plan.gates && ops.watchers.some(w => w.status === 'due' && w.needs?.startsWith(PLAN_NEEDS) === true)) this.planHoldLifted()
     this.rearm()
   }
 
@@ -215,8 +234,10 @@ export class Operations {
     for (const w of from.watchers.filter(Ops.isWatcherOpen)) {
       // It parks this run from now: overdue ones wait for the person; the checkpoint is this run's now.
       const wakeAt = Math.max(w.wakeAt, now + 60_000)
-      const added = Ops.addWatcher(ops, { label: w.label, wakeAt, strategy: w.strategy, now, milestone: w.milestone, checkpoint: rt.turn.isRunning ? null : this.checkpoint(), source: 'carried', decided: null })
+      const added = Ops.addWatcher(ops, { label: w.label, wakeAt, strategy: w.strategy, now, milestone: w.milestone, checkpoint: rt.turn.isRunning ? null : this.checkpoint(), source: w.source === 'plan' ? 'plan' : 'carried', decided: null })
       if (!('error' in added)) ops = w.wakeAt < now ? Ops.patchWatcher(added.ops, added.watcher.id, { status: 'due', needs: `Watcher was due ${agoWords(now - w.wakeAt)} (in run ${f.runNumber}).` }) : added.ops
+      // The plan's park keeps its ask: the notes it had written are not asked for again in a context that never held the work.
+      if (!('error' in added) && w.source === 'plan') ops = Ops.patchWatcher(ops, added.watcher.id, { notesAskedAt: w.notesAskedAt })
     }
     ops = Ops.logged(ops, now, `Brought ${[f.watchers > 0 ? fmt.plural(f.watchers, 'watcher') : '', f.queued > 0 ? `${f.queued} queued` : '', f.decisions > 0 ? fmt.plural(f.decisions, 'decision') : ''].filter(Boolean).join(', ')} from run ${f.runNumber}`)
     this.commit(ops)
@@ -294,7 +315,11 @@ export class Operations {
     }
     this.checkBudget()
     rt.publisher.mark('hud', 'ops')
-    if (due.length > 0) this.atBoundary()
+    // A watcher held by the plan whose hold has ended (the reset passed, a reload between): its boundary comes from the tick. One
+    // whose words no longer name the hold (paused and resumed, checked or rescheduled by the person) waits for them, not for a
+    // boundary: `heldUntil` alone is not the hold.
+    const isReleased = this.current().watchers.some(w => w.status === 'due' && w.needs?.startsWith(PLAN_NEEDS) === true && w.heldUntil !== null && now >= w.heldUntil)
+    if (due.length > 0 || isReleased) this.atBoundary()
   }
 
   // -------------------------------------------------------------------------
@@ -378,12 +403,20 @@ export class Operations {
     const isPerson = input.kind === 'person' || (flight?.isForced ?? false)
     if (isPerson) ops = { ...ops, personTurns: ops.personTurns + 1 }
     const cp = Ops.checkpointNow({ now, sessionId: rt.sessionId, turns: ops.personTurns, tasks: rt.plan().tasks })
+    const parked = flight?.kind === 'park' ? new Set(flight.ids) : null
     for (const w of ops.watchers) {
+      // The notes turn before a park, whatever became of its watcher meanwhile: the run is parked where that turn ends.
+      if (parked?.has(w.id) && Ops.isWatcherOpen(w)) {
+        ops = Ops.patchWatcher(ops, w.id, { checkpoint: cp })
+        continue
+      }
       if (w.status !== 'armed') continue
       // Armed while this turn ran: the run parks where this turn left it.
       if (w.checkpoint === null) ops = Ops.patchWatcher(ops, w.id, { checkpoint: cp })
       // After a turn of Project Sentinel's own with no turn of the person's since the park, the run is parked here now.
       else if (!isPerson && w.checkpoint.turns === ops.personTurns) ops = Ops.patchWatcher(ops, w.id, { checkpoint: cp })
+      // The plan's park: the person's own turns meanwhile leave the run parked where they end (their prompt asks Claude to keep the notes current).
+      else if (w.source === 'plan') ops = Ops.patchWatcher(ops, w.id, { checkpoint: cp })
     }
     // Notes that never left (the turn made no more tool calls) go as a prompt instead.
     if (rt.notesBox.drop('queue')) ops = Ops.markQueue(ops, ops.queue.filter(q => q.status === 'sending' && q.via === 'note').map(q => q.id), 'due', now)
@@ -479,6 +512,7 @@ export class Operations {
     const host = rt.host
     if (host === null || !this.isFree() || rt.run === null) return
     const now = this.now()
+    if (await this.planNotes()) return
     if (await this.wakeDue(now)) return
     // The person's own push (an answer the run waits on, Send now, Deliver now) goes even past a park, as their turn.
     const answered = this.current().decisions.filter(d => d.status === 'answered')
@@ -560,6 +594,7 @@ export class Operations {
     if (isHeld) return `Waits for ${holder.id}'s wake (${clockAhead(holder.wakeAt, this.now())})`
     // At a limit set to Ask or Finish, automation waits for the person: never "goes now" when it will not.
     if (q.status === 'due' && !this.forcedIds.has(q.id) && this.isBudgetHolding()) return 'Waits for you: the run budget is reached (Continue the run, or /cr budget continue)'
+    if (q.status === 'due' && !this.forcedIds.has(q.id) && this.rt.planHold() !== null) return "Waits for the 7-day plan window's reset (the plan hold)"
     if (q.status === 'due') return rt.turn.isRunning ? 'Due: goes when this turn ends' : 'Due: goes now'
     if (q.target === 'milestone' && q.milestone !== null) return `After the current milestone: ${clean(q.milestone, 50)}`
     if (q.target === 'boundary' && rt.turn.isRunning && this.currentMilestone() !== null) return 'At the next boundary: this milestone or this turn'
@@ -744,8 +779,15 @@ export class Operations {
    * over a cache that went cold uses a healthy fresh resume (Smart), or asks.
    */
   private async wakeDue(now: number): Promise<boolean> {
-    const w = this.current().watchers.filter(x => (x.status === 'due' && x.needs === null) || (x.status === 'armed' && x.wakeAt <= now)).sort((a, b) => a.wakeAt - b.wakeAt)[0]
+    const hold = this.holdReason()
+    // A hold's text on a due watcher stands until that hold ends: the plan's at the reset it names (a reload between kept, an
+    // early lift cleared by `planHoldLifted`) or with the gates off; the budget's until the person lets the run go on.
+    const isLifted = (x: Ops.Watcher): boolean =>
+      x.needs !== null &&
+      ((x.needs.startsWith(PLAN_NEEDS) && (!this.rt.settings.plan.gates || (x.heldUntil !== null && now >= x.heldUntil))) || (x.needs === BUDGET_NEEDS && !this.isBudgetHolding()))
+    const w = this.current().watchers.filter(x => (x.status === 'due' && (x.needs === null || isLifted(x))) || (x.status === 'armed' && x.wakeAt <= now)).sort((a, b) => a.wakeAt - b.wakeAt)[0]
     if (w === undefined) return false
+    if (w.needs !== null && isLifted(w)) this.commit(Ops.patchWatcher(this.current(), w.id, { needs: null, heldUntil: null }))
     const cp = w.checkpoint ?? this.checkpoint()
     const at = this.checkpoint()
     const changed = Ops.changedSince(cp, at)
@@ -755,9 +797,10 @@ export class Operations {
       this.toast(`Watcher due: ${w.label}. This run changed since it was armed, so it waits for you.`, 8000)
       return true
     }
-    if (!this.mayAutomate(`${w.id}'s wake`)) {
-      this.commit(Ops.patchWatcher(this.current(), w.id, { status: 'due', needs: 'The run budget is reached: the wake waits for you.' }))
-      this.rt.trace(`ops: ${w.id} due, the run budget is reached: waits for you`)
+    if (hold !== null) {
+      this.mayAutomate(`${w.id}'s wake`)
+      this.commit(Ops.patchWatcher(this.current(), w.id, { status: 'due', needs: hold.needs, heldUntil: hold.until }))
+      this.rt.trace(`ops: ${w.id} due, ${hold.kind === 'budget' ? 'the run budget is reached: waits for you' : 'the plan holds: waits for the 7-day reset'}`)
       return true
     }
     const decided = w.strategy === 'smart' ? this.smartFor(now) : w.decided
@@ -801,7 +844,7 @@ export class Operations {
     this.setInFlight({ kind: 'wake', ids: [w.id], isForced: false })
     rt.trace(`ops: ${w.id} wakes the run in this context`)
     try {
-      const result = await host.submit(prompts.wakePrompt({ id: w.id, label: w.label, armedAt: w.createdAt, milestone: w.milestone, lateMs: Math.max(0, now - w.wakeAt), queued }))
+      const result = await host.submit(prompts.wakePrompt({ id: w.id, label: w.label, armedAt: w.createdAt, milestone: w.milestone, lateMs: Math.max(0, now - w.wakeAt), queued, isPlan: w.source === 'plan' }))
       if (result.drop !== undefined) throw new Error(result.drop)
       this.commit(Ops.patchWatcher(this.current(), w.id, { status: 'done', endedAt: this.now(), outcome: 'Woke the run in this context', needs: null }, { at: this.now(), text: `${w.id} woke the run in this context` }))
       // Queued work waited for the wake: it is due at the wake turn's end.
@@ -907,8 +950,8 @@ export class Operations {
     if (!this.rt.turn.isRunning) this.rt.cache.schedule()
   }
 
-  /** Before a fresh park: Claude writes the notes now (the person asked), so the fresh wake has them. */
-  async prepareNotes(id: string): Promise<void> {
+  /** Before a fresh park: Claude writes the notes now (the person asked, or the plan gates park), so the fresh wake has them. */
+  async prepareNotes(id: string, plan: { percent: number } | null = null): Promise<void> {
     const rt = this.rt
     const host = rt.host
     const w = this.current().watchers.find(x => x.id === id)
@@ -916,11 +959,19 @@ export class Operations {
     this.setInFlight({ kind: 'park', ids: [id], isForced: false })
     const planTool = rt.planSource === 'milestones' ? rt.milestonesTool : rt.planSource === 'tasks' ? 'your task list (TodoWrite or the Task tools)' : null
     try {
-      const result = await host.submit(prompts.parkPrompt({ id, label: w.label, wakeAt: w.wakeAt, handoffFile: rt.settings.autopilot.handoffFile, planTool }))
+      const result = await host.submit(prompts.parkPrompt({ id, label: w.label, wakeAt: w.wakeAt, handoffFile: rt.settings.autopilot.handoffFile, planTool, plan, now: this.now() }))
       if (result.drop !== undefined) throw new Error(result.drop)
+      this.commit(Ops.patchWatcher(this.current(), id, { notesAskedAt: this.now() }))
       this.log(`${id}: Claude was asked to write the notes before the park`)
-    } catch {
+    } catch (error) {
       this.inFlight = null
+      this.log(`${id}: the notes could not be asked for (${error instanceof Error ? clean(error.message, 120) : String(error)})`)
+    }
+    // The pressure went while the ask was on its way: decided now that it is answered (taken, the park wakes here after the
+    // notes turn; dropped, it never began).
+    if (this.unparkAfterAsk === id) {
+      this.unparkAfterAsk = null
+      void this.planUnpark()
     }
   }
 
@@ -1333,12 +1384,28 @@ export class Operations {
     return Ops.checkBudget(b, this.metrics()).reached.some(k => !b.approved.includes(k))
   }
 
-  /** Whether automation may start a turn now: not past a limit set to Ask or Finish, unless the person said go on. */
+  /** Why automation waits now: the run budget (the person says go on) or the plan hold (the reset lifts it); null when it may go. */
+  holdReason(): { kind: 'budget' | 'plan'; needs: string; until: number | null } | null {
+    if (this.isBudgetHolding()) return { kind: 'budget', needs: BUDGET_NEEDS, until: null }
+    const plan = this.rt.planHold()
+    if (plan !== null) return { kind: 'plan', needs: `${PLAN_NEEDS}${plan.percent}%: the wake waits for the reset${plan.resetsAt === null ? '' : ` at ${clockAhead(plan.resetsAt, this.now())}`}.`, until: plan.resetsAt }
+    return null
+  }
+
+  /**
+   * Whether automation may start a turn now: not past a budget limit set to Ask or Finish unless the
+   * person said go on, and not under the plan hold (`plan.holdAt`) until the 7-day window resets.
+   */
   mayAutomate(what: string): boolean {
-    if (!this.isBudgetHolding()) return true
-    if (this.budgetHeld !== what) {
+    const hold = this.holdReason()
+    if (hold === null) return true
+    if (hold.kind === 'budget' && this.budgetHeld !== what) {
       this.budgetHeld = what
       this.rt.trace(`ops: run budget reached, ${what} waits for you`)
+      this.rt.publisher.mark('hud', 'ops')
+    } else if (hold.kind === 'plan' && this.planHeld !== what) {
+      this.planHeld = what
+      this.rt.trace(`ops: plan hold, ${what} waits for the 7-day reset`)
       this.rt.publisher.mark('hud', 'ops')
     }
     return false
@@ -1347,12 +1414,17 @@ export class Operations {
   /** What automation waits on the budget for, in words; null when nothing does. */
   budgetHeld: string | null = null
 
+  /** What automation waits on the plan hold for, in words; null when nothing does. */
+  planHeld: string | null = null
+
   /** Continue anyway: automation goes on past the limits reached now; a new one asks again. */
   approveBudget(): void {
     const b = this.current().budget
     if (b === null) return
     const check = Ops.checkBudget(b, this.metrics())
-    this.commit({ ...this.current(), budget: { ...b, approved: [...new Set([...b.approved, ...check.reached])] } })
+    let ops: Ops.RunOps = { ...this.current(), budget: { ...b, approved: [...new Set([...b.approved, ...check.reached])] } }
+    for (const w of ops.watchers) if (w.status === 'due' && w.needs === BUDGET_NEEDS) ops = Ops.patchWatcher(ops, w.id, { needs: null })
+    this.commit(ops)
     this.budgetHeld = null
     this.log('Run budget: you let the run go on past its limit')
     this.atBoundary()
@@ -1390,6 +1462,132 @@ export class Operations {
     this.commit(Ops.setBudget(this.current(), patch, this.now()))
     this.budgetHeld = null
     this.checkBudget()
+  }
+
+  // -------------------------------------------------------------------------
+  // Plan gates: the park at `plan.parkAt` (a fresh watcher at the 7-day reset, the notes written first) and the hold at `plan.holdAt`
+
+  /** The plan's watcher waiting for its notes: `prepareNotes` runs at the next boundary, with the session free; once more if not taken. */
+  private planNotesPending: { id: string; percent: number; tries: number } | null = null
+
+  /** The plan's park whose notes ask was on its way when the pressure went: unparked once the ask is taken or dropped. */
+  private unparkAfterAsk: string | null = null
+
+  /** The open watcher the plan gates armed whose time is still ahead, if any: one at a time, and it survives a reload with the run. */
+  planWatcher(): Ops.Watcher | null {
+    const now = this.now()
+    return this.current().watchers.find(w => w.source === 'plan' && Ops.isWatcherOpen(w) && w.wakeAt > now) ?? null
+  }
+
+  /**
+   * The 7-day window reached `parkAt`: the run parks until the window's reset. A fresh watcher is armed
+   * at the reset (nothing is spent while it sleeps; the wake resumes in a fresh context), and Claude is
+   * asked once, at the next boundary, to write the notes that wake needs. One park per window: a reading
+   * in `parking` or `hold` while the watcher stands, or a reload, arms nothing more.
+   */
+  parkForPlan(input: { percent: number; resetsAt: number | null }): void {
+    const rt = this.rt
+    const now = this.now()
+    const standing = this.planWatcher()
+    if (standing !== null) {
+      // The pressure is back before a deferred unpark went: the park stands.
+      this.unparkAfterAsk = null
+      // Standing from before a reload: notes never asked for (the watcher says when they were) are asked for now.
+      if (standing.notesAskedAt === null && this.planNotesPending === null) {
+        this.planNotesPending = { id: standing.id, percent: input.percent, tries: 0 }
+        this.atBoundary()
+      }
+      return
+    }
+    // An earlier window's park, overdue (Claude Code was closed through the reset, or its wake waited for the person past it): it
+    // ends, and this window's park is armed.
+    for (const w of this.current().watchers) {
+      if (w.source !== 'plan' || !Ops.isWatcherOpen(w) || w.wakeAt > now) continue
+      this.commit(Ops.patchWatcher(this.current(), w.id, { status: 'dismissed', endedAt: now, outcome: 'Its 7-day window reset before it woke; a new park follows', needs: null }, { at: now, text: `${w.id} dismissed: its window reset before it woke` }))
+    }
+    const at = input.resetsAt
+    const why = !rt.settings.ops.watchers ? 'Watchers are off' : rt.run === null ? 'no run yet' : at === null ? 'the window gave no reset time' : null
+    if (why !== null || at === null) {
+      rt.trace(`plan gates: 7-day ${input.percent}% calls for a park, but ${why}: nothing armed`)
+      this.log(`Plan gates: 7-day ${input.percent}%, no park (${why})`)
+      return
+    }
+    const armed = this.armAt(`the 7-day window's reset (plan at ${input.percent}%)`, { kind: 'at', at, words: '' }, 'fresh', 'plan')
+    if (!armed.ok) {
+      rt.trace(`plan gates: 7-day ${input.percent}% calls for a park, but no watcher was armed: ${armed.error}`)
+      this.log(`Plan gates: 7-day ${input.percent}%, no park (${armed.error})`)
+      return
+    }
+    this.log(`${armed.id} armed by the plan gates: 7-day ${input.percent}%, the run parks until the reset`)
+    this.toast(`Plan at ${input.percent}%: the run parks until the 7-day reset (${armed.words}). Claude writes the notes first.`, 8000)
+    this.planNotesPending = { id: armed.id, percent: input.percent, tries: 0 }
+    this.atBoundary()
+  }
+
+  /** The notes before the plan's park, once the session is free. True when the prompt went: nothing else goes this boundary. */
+  private async planNotes(): Promise<boolean> {
+    const pending = this.planNotesPending
+    if (pending === null) return false
+    this.planNotesPending = null
+    const w = this.current().watchers.find(x => x.id === pending.id)
+    // Only an armed park whose time is ahead gets its notes: past the reset the wake is what goes.
+    if (w === undefined || w.status !== 'armed' || w.wakeAt <= this.now()) return false
+    await this.prepareNotes(pending.id, { percent: pending.percent })
+    if (this.inFlight?.kind === 'park') return true
+    // Not taken: once more at the next boundary; then the park stands and the wake checks the notes' health as any fresh wake does.
+    if (pending.tries < 1) this.planNotesPending = { ...pending, tries: pending.tries + 1 }
+    else this.log(`${pending.id}: the notes were not asked for twice; the park stands on the notes as they are`)
+    return false
+  }
+
+  /** The person's own prompt during the park carries the ask for the notes: a pending ask of Control Room's is dropped, the park marked asked. */
+  notesAskedByPerson(id: string): void {
+    if (this.planNotesPending?.id === id) this.planNotesPending = null
+    const w = this.current().watchers.find(x => x.id === id)
+    if (w !== undefined && w.notesAskedAt === null) this.commit(Ops.patchWatcher(this.current(), id, { notesAskedAt: this.now() }))
+  }
+
+  /** The plan hold lifted (the window reset, the gates changed): what it held goes on at the next boundary. */
+  planHoldLifted(): void {
+    this.planHeld = null
+    let ops = this.current()
+    let changed = false
+    for (const w of ops.watchers) {
+      if (w.status !== 'due' || w.needs === null || !w.needs.startsWith(PLAN_NEEDS)) continue
+      ops = Ops.patchWatcher(ops, w.id, { needs: null, heldUntil: null })
+      changed = true
+    }
+    if (changed) this.commit(ops)
+    this.rt.publisher.mark('hud', 'ops')
+    this.atBoundary()
+  }
+
+  /**
+   * The park's reason went before the reset (the gates turned off, a new window): a park that never took
+   * (the notes not yet asked for) is dismissed; one that did wakes now, here, in its own words. A paused
+   * watcher is the person's to wake.
+   */
+  async planUnpark(): Promise<void> {
+    const w = this.planWatcher()
+    if (w === null || w.status !== 'armed') return
+    const now = this.now()
+    if (w.wakeAt <= now + UNPARK_GRACE_MS) return
+    // The ask for the notes is on its way (submitted, not yet answered: `notesAskedAt` is written once Claude Code takes it): the
+    // decision waits for the answer, in `prepareNotes`. Taken, the notes turn under way is the wake's boundary.
+    const flight = this.inFlight
+    if (w.notesAskedAt === null && flight !== null && flight.kind === 'park' && flight.ids.includes(w.id)) {
+      this.unparkAfterAsk = w.id
+      return
+    }
+    // Never began: the notes still pending here, or never asked for as the watcher itself says (a reload lost the pending ask).
+    if (this.planNotesPending?.id === w.id || w.notesAskedAt === null) {
+      this.planNotesPending = null
+      this.commit(Ops.patchWatcher(this.current(), w.id, { status: 'dismissed', endedAt: now, outcome: "The plan's park ended before it began", needs: null }, { at: now, text: `${w.id} dismissed: the plan's park ended before it began` }))
+      this.rt.publisher.mark('hud', 'ops')
+      return
+    }
+    this.commit(Ops.patchWatcher(this.current(), w.id, { strategy: 'warm', decided: null }, { at: now, text: `${w.id}: the plan's park ends early, the 7-day pressure is gone` }))
+    await this.wakeNow(w.id)
   }
 
   // -------------------------------------------------------------------------

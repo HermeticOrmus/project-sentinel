@@ -28,6 +28,8 @@ export const STORE_ENTRIES = {
   cache: 'cache.v1',
   /** A fresh install's first-run card (1.7.0): when it was shown, and when the person dismissed it. */
   onboarding: 'onboarding.v1',
+  /** The plan windows' readings over time: the burn rate's samples (`plan.rate`). */
+  plan: 'plan.v1',
 } as const
 
 /** The handoff file Context Autopilot asks Claude to create or update. */

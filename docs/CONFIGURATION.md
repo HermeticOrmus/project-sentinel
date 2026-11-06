@@ -258,6 +258,12 @@ Operations → *Run budget* or with `/cr budget`, and is off until you set one:
 | Handoffs | 1–50 | Autopilot handoffs in the run |
 | At a limit | *Notify only* / *Ask before continuing* (default) / *Finish the milestone, then pause* | Said once at 80% and once at the limit. *Ask*: Project Sentinel starts no turn by itself (queued work, a wake, an Autopilot continuation, the lazy-exit guard) without your yes, and asks once before your next message. *Finish*: as *Ask*, and Claude is told with its next tool results to finish the milestone it is on and stop there. Nothing stops a tool call or a turn under way. |
 
+### Plan usage over time (`plan`)
+
+| Key | Values | Default | What it does |
+|---|---|---|---|
+| `rate` | `true`, `false` | `false` | Keep each plan window's readings in the store where they moved (a move within five minutes of the last kept reading replaces it: at most one per five minutes, 288 per window; a lower percent or another reset time is a new window and starts afresh) and show the window's pace beside its reading in `/cr status` and Context → Run: the percent per hour over the last six hours, and when it would be full at that pace counted from now, where that comes before its reset. Derived from Claude Code's own readings; nothing below two readings, ten minutes between them, or when the last reading is older than fifteen minutes. |
+
 ### Subagents (`subagents`)
 
 In the panel: **Guardrails**.

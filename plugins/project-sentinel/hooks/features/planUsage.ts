@@ -130,17 +130,110 @@ export const isTicking = (state: PlanUsage, now: number): boolean => {
   return v.kind === 'reading' || (v.kind === 'limited' && v.leftMs !== null)
 }
 
-/** One window for the detail views (Context → Run): its name, its reading, its reset. */
-export type WindowRow = { key: LimitWindow; name: string; percent: number | null; resetsAt: number | null; leftMs: number | null; isReset: boolean }
+// ---------------------------------------------------------------------------
+// The readings over time (`plan.rate`): how fast a window moves, and when it would be full.
 
-export function windowRows(state: PlanUsage, now: number): WindowRow[] {
+/** One reading kept: when it was read, and the window's percent then. */
+export type Sample = { at: number; percent: number }
+
+/** A window's kept readings, all of one window: `resetsAt` names it, so a reset starts the ring afresh. */
+export type WindowSamples = { resetsAt: number | null; points: Sample[] }
+
+export type PlanSamples = { fiveHour: WindowSamples; sevenDay: WindowSamples }
+
+export const emptySamples = (): PlanSamples => ({ fiveHour: { resetsAt: null, points: [] }, sevenDay: { resetsAt: null, points: [] } })
+
+/** At most this many readings per window: one per five minutes over a day. */
+export const SAMPLE_LIMIT = 288
+
+/** A reading that moved within this long of the last kept one replaces it, so the ring holds at most one per five minutes. */
+const SAMPLE_GAP_MS = 5 * 60_000
+
+/** The pace is read over the readings of this span. */
+export const TREND_SPAN_MS = 6 * 3_600_000
+
+/** Below this span between the first and last reading used, no pace is shown: too little to say. */
+const TREND_MIN_SPAN_MS = 10 * 60_000
+
+/** A last reading older than this says nothing about now (the session idle, other sessions burning): no pace. */
+export const TREND_STALE_MS = 15 * 60_000
+
+const isSampleRecord = (v: unknown): v is Sample =>
+  typeof v === 'object' && v !== null && typeof (v as Sample).at === 'number' && typeof (v as Sample).percent === 'number'
+
+const windowSamplesOf = (v: unknown): WindowSamples => {
+  const r = typeof v === 'object' && v !== null ? (v as { resetsAt?: unknown; points?: unknown }) : {}
+  const resetsAt = typeof r.resetsAt === 'number' ? r.resetsAt : null
+  const points = Array.isArray(r.points) ? r.points.filter(isSampleRecord).slice(-SAMPLE_LIMIT) : []
+  return { resetsAt, points }
+}
+
+/** The samples as the store kept them; anything foreign or corrupt reads as none. */
+export function samplesOf(raw: unknown): PlanSamples {
+  const r = typeof raw === 'object' && raw !== null ? (raw as { fiveHour?: unknown; sevenDay?: unknown }) : {}
+  return { fiveHour: windowSamplesOf(r.fiveHour), sevenDay: windowSamplesOf(r.sevenDay) }
+}
+
+function noteWindow(kept: WindowSamples, w: WindowReading | null, now: number): WindowSamples {
+  if (w === null || isPast(w, now)) return kept
+  const last = kept.points[kept.points.length - 1]
+  // Usage never falls inside one window: a lower percent, like another reset time, is a new window and starts afresh.
+  const isNewWindow = kept.resetsAt !== w.resetsAt || (last !== undefined && w.percent < last.percent)
+  const ring = isNewWindow ? { resetsAt: w.resetsAt, points: [] } : kept
+  const kept2 = ring.points[ring.points.length - 1]
+  if (kept2 !== undefined && (kept2.percent === w.percent || now <= kept2.at)) return ring
+  // A move within five minutes of the last kept reading replaces it: at most one reading per five minutes.
+  const base = kept2 !== undefined && now - kept2.at < SAMPLE_GAP_MS ? ring.points.slice(0, -1) : ring.points
+  const points = [...base, { at: now, percent: w.percent }].slice(-SAMPLE_LIMIT)
+  return { resetsAt: w.resetsAt, points }
+}
+
+/** The windows' current readings, kept where they moved. Returns `samples` itself when nothing was kept. */
+export function noteSamples(samples: PlanSamples, state: PlanUsage, now: number): PlanSamples {
+  const fiveHour = noteWindow(samples.fiveHour, state.fiveHour, now)
+  const sevenDay = noteWindow(samples.sevenDay, state.sevenDay, now)
+  return fiveHour === samples.fiveHour && sevenDay === samples.sevenDay ? samples : { fiveHour, sevenDay }
+}
+
+/** A window's pace: percent per hour over its recent readings, and when it reaches 100% at that pace. */
+export type Trend = { perHour: number; fullInMs: number | null }
+
+/**
+ * The pace over the readings of the last `TREND_SPAN_MS`, from the oldest of them to the newest,
+ * while the newest is fresh (`TREND_STALE_MS`). Null below two readings or ten minutes between
+ * them. `fullInMs` counts from `now` (the last reading's time is taken off), and is null when the
+ * window is full already, when the pace is not upward, or when `leftMs` says the window resets
+ * first. The pace shown is rounded to a tenth; the time to full is read from the pace as measured.
+ */
+export function trendOf(kept: WindowSamples, now: number, leftMs: number | null): Trend | null {
+  const recent = kept.points.filter(p => p.at >= now - TREND_SPAN_MS && p.at <= now)
+  if (recent.length < 2) return null
+  const first = recent[0]!
+  const last = recent[recent.length - 1]!
+  if (now - last.at > TREND_STALE_MS) return null
+  const spanMs = last.at - first.at
+  if (spanMs < TREND_MIN_SPAN_MS) return null
+  const rate = (last.percent - first.percent) / (spanMs / 3_600_000)
+  const perHour = Math.round(rate * 10) / 10
+  if (rate <= 0 || last.percent >= 100) return { perHour, fullInMs: null }
+  const fullInMs = Math.round(((100 - last.percent) / rate) * 3_600_000 - (now - last.at))
+  if (fullInMs <= 0) return { perHour, fullInMs: null }
+  return { perHour, fullInMs: leftMs !== null && fullInMs >= leftMs ? null : fullInMs }
+}
+
+/** One window for the detail views (Context → Run): its name, its reading, its reset, and with samples its pace. */
+export type WindowRow = { key: LimitWindow; name: string; percent: number | null; resetsAt: number | null; leftMs: number | null; isReset: boolean; trend: Trend | null }
+
+export function windowRows(state: PlanUsage, now: number, samples: PlanSamples | null = null): WindowRow[] {
   const rows: WindowRow[] = []
-  const add = (key: LimitWindow, name: string, w: WindowReading | null) => {
+  const add = (key: LimitWindow, name: string, w: WindowReading | null, kept: WindowSamples | null) => {
     if (w === null) return
     const isReset = isPast(w, now)
-    rows.push({ key, name, percent: isReset ? null : w.percent, resetsAt: w.resetsAt, leftMs: isReset ? null : leftOf(w, now), isReset })
+    const leftMs = isReset ? null : leftOf(w, now)
+    const trend = isReset || kept === null ? null : trendOf(kept, now, leftMs)
+    rows.push({ key, name, percent: isReset ? null : w.percent, resetsAt: w.resetsAt, leftMs, isReset, trend })
   }
-  add('five_hour', '5-hour', state.fiveHour)
-  add('seven_day', '7-day', state.sevenDay)
+  add('five_hour', '5-hour', state.fiveHour, samples?.fiveHour ?? null)
+  add('seven_day', '7-day', state.sevenDay, samples?.sevenDay ?? null)
   return rows
 }

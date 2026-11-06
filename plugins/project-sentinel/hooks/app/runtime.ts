@@ -1542,7 +1542,7 @@ export class Runtime {
     // any. A toast that throws is said on this line, after what the notification did: the alert was raised either way.
     const isRefused = !sent.isSent && (sent.reason === 'refused' || sent.reason === 'rejected')
     const isToast = (sent.isSent ? sent.channel === 'terminal_bell' : !isRefused) && this.surfaces.length > 0 && this.settings.ui.toasts
-    const how = sent.isSent ? `sent (${sent.channel})` : sent.reason === 'rejected' ? `rejected (${sent.detail ?? 'a hook said no'})` : sent.reason === 'refused' ? 'refused by a hook above' : `raised through the Notification hooks, no channel wrote it (${sent.reason})`
+    const how = sent.isSent ? `sent (${sent.channel})` : sent.reason === 'rejected' ? `rejected (${sent.detail ?? 'a hook said no'})` : sent.reason === 'refused' ? 'refused by a hook above' : sent.reason === 'unsupported' ? 'not raised: this Claude Code has no ui.notify, so no hook ran' : `raised through the Notification hooks, no channel wrote it (${sent.reason})`
     let toast = ''
     if (isToast) {
       try {

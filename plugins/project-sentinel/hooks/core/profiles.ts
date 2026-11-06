@@ -35,6 +35,24 @@ export type ProfileInfo = {
 /** Normal: the fresh-install defaults (1.7.0). */
 const normal = (): SystemSettings => defaultSystems()
 
+/**
+ * Economy (1.8.0): Normal, with the plan gates on (economy at 60%, park at 85%, hold at 95% of the 7-day
+ * window), the burn rate shown, alerts at 50, 75 and 90%, a run budget of four handoffs then one question,
+ * Autopilot at 25% (a 250k hand-off on a 1M window), at most three subagents, and the router custom:
+ * subagents on Sonnet (Explore too, which the gates put on Haiku under economy; Plan agents keep the
+ * session model) and the main conversation unrouted. For an account shared by several machines: the
+ * week's budget never runs out mid-task unseen.
+ */
+const economy = (): SystemSettings => {
+  const s = defaultSystems()
+  s.plan = { ...s.plan, gates: true, rate: true, alerts: [50, 75, 90] }
+  s.ops = { ...s.ops, budget: { costUsd: null, durationMs: null, handoffs: 4, atLimit: 'ask' } }
+  s.autopilot = { ...s.autopilot, enabled: true, thresholdMode: 'percent', thresholdPercent: 25 }
+  s.subagents = { ...s.subagents, mode: 'limit', limit: 3 }
+  s.router = { ...s.router, strategy: 'custom', mainLoop: false, subagents: true, custom: { ...s.router.custom, explore: 'sonnet' } }
+  return s
+}
+
 /** Classic: Normal as it was before 1.7.0, Autopilot and Frontier Max off. */
 const classic = (): SystemSettings => classicSystems()
 
@@ -98,6 +116,7 @@ export const BUILTIN_PROFILES: readonly Omit<ProfileInfo, 'systems'>[] = [
     tagline: 'Verifies before calling it done',
     isBuiltin: true,
   },
+  { id: 'economy', name: 'Economy', tagline: 'Plan gates, alerts and a run budget: the week never runs out mid-task', isBuiltin: true },
   { id: 'classic', name: 'Classic', tagline: 'As before 1.7: Autopilot and Frontier Max off', isBuiltin: true },
 ]
 
@@ -106,6 +125,7 @@ const BUILDERS: Record<string, () => SystemSettings> = {
   frontier,
   'low-resource': lowResource,
   'release-qa': releaseQa,
+  economy,
   classic,
 }
 
@@ -134,10 +154,10 @@ export function applyProfile(settings: Settings, profile: ProfileInfo): Settings
   return { ...settings, ...clone(profile.systems), profile: profile.id }
 }
 
-/** Whether the current systems differ from the profile they say they came from. */
+/** Whether the current systems differ from the profile they say they came from: by the same diff Setup lists, so the mark never shows with nothing listed. */
 export function isModified(settings: Settings): boolean {
   const profile = findProfile(settings, settings.profile)
-  return profile === undefined ? false : !deepEqual(systemsOf(settings), profile.systems)
+  return profile === undefined ? false : diffSystems(profile.systems, systemsOf(settings)).length > 0
 }
 
 export function profileLabel(settings: Settings): string {
@@ -180,6 +200,13 @@ const LABELS: Record<string, string> = {
   'router.strategy': 'Model router',
   'router.mainLoop': 'Route main conversation',
   'router.subagents': 'Route subagents',
+  'router.custom.trivial': 'Quick replies model',
+  'router.custom.simple': 'Questions model',
+  'router.custom.standard': 'Building model',
+  'router.custom.hard': 'Hard problems model',
+  'router.custom.explore': 'Explore agents model',
+  'router.custom.plan': 'Plan agents model',
+  'router.custom.general': 'Other agents model',
   'subagents.mode': 'Subagents',
   'subagents.limit': 'Subagents at most',
   'subagents.countTeammates': 'Count teammates',
@@ -222,6 +249,7 @@ const VALUE_LABELS: Record<string, Record<string, string>> = {
   'answers.style': { standard: 'Standard', brief: 'Brief', ste: 'Plain technical', mission: 'Mission control', quest: 'Quest log' },
   'ops.scout': { off: 'Off', suggest: 'Suggest', auto: 'Arm explicit waits' },
   'plan.economy.forks': { allow: 'Allowed', deny: 'Refused' },
+  ...Object.fromEntries(['trivial', 'simple', 'standard', 'hard', 'explore', 'plan', 'general'].map(c => [`router.custom.${c}`, { session: 'Session model' }])),
 }
 
 const UNITS: Record<string, (n: number) => string> = {
@@ -273,10 +301,12 @@ export function diffSystems(from: SystemSettings, to: SystemSettings): SettingCh
   flatten('', from, a)
   flatten('', to, b)
   const changes: SettingChange[] = []
+  // The custom router's models count only where a side routes custom: elsewhere they are unseen settings.
+  const isCustom = from.router.strategy === 'custom' || to.router.strategy === 'custom'
   for (const [path, next] of b) {
     const prev = a.get(path)
     if (deepEqual(prev, next)) continue
-    if (path.startsWith('router.custom.')) continue
+    if (path.startsWith('router.custom.') && !isCustom) continue
     changes.push({ path, label: LABELS[path] ?? path, from: show(path, prev), to: show(path, next) })
   }
   return changes

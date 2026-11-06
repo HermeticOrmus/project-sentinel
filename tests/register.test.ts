@@ -44,9 +44,11 @@ describe('register', () => {
     on('state.get', ($, e, next) => (e.plugin === 'control-room' ? { value: { value: former, version: 7 } } : next(e)))
     on('prompt.compose', () => ({ sections: [{ id: 'intro', text: 'You are Claude Code.', scope: 'shared' as const }] }))
     on('ui.render', { component: 'AbovePrompt' }, () => ({ type: 'engine' as const, ref: 0 }))
+    // Each check the stand-in sees, named by its tool and by whether it is a hook's own query (no
+    // tool_use_id) or the engine's check of a call that runs (its tool_use_id).
     const checked: string[] = []
     on('tool.check', ($, e) => {
-      checked.push(String((e.input as { command?: string }).command))
+      checked.push(`${e.tool}:${e.tool_use_id === undefined ? 'query' : 'call'}`)
       return { decision: 'allow' as const }
     })
     await $.session.start(SESSION)
@@ -60,7 +62,9 @@ describe('register', () => {
     expect((await $.tool.call({ tool: 'Bash', command: 'git push origin main' })).deny).toBeUndefined()
     expect((await $.tool.call({ tool: 'Bash', command: 'git push --force origin main' })).deny).toBeUndefined()
     expect(w.kept.asked).toEqual([])
-    expect(checked).toEqual([])
+    // Both checks are Claude Code's own, of the calls that ran: since Claude Code 2.1.307 `tool.call`'s core runs
+    // `tool.check` through the hooks. Project Sentinel queried nothing (no `query` entry) and asked nothing.
+    expect(checked).toEqual(['Bash:call', 'Bash:call'])
     // No policy section, no status bar, no run recorded, nothing carried over.
     const composed = await $.prompt.compose(COMPOSE)
     expect(composed.sections.map(s => s.id)).toEqual(['intro'])
@@ -134,9 +138,13 @@ describe('register', () => {
   test('Ask: Control Room asks first where Claude Code would not ask, never answers a permission check, and a settings deny stands', { timeoutMs: 30_000 }, async ($, on) => {
     const w = world(on)
     let engine: 'allow' | 'ask' | 'deny' = 'allow'
+    // Each check the stand-in sees: the tool, and whether it is a hook's own query (no tool_use_id) or the
+    // engine's check of a call that runs. `$.ui.ask` is itself a `tool.call` of AskUserQuestion, so its check
+    // runs through these hooks too; the stand-in's verdict is for Bash alone.
     const checked: string[] = []
-    on('tool.check', ($, e) => {
-      checked.push(String((e.input as { command?: string }).command))
+    on('tool.check', ($, e, next) => {
+      checked.push(`${e.tool}:${e.tool_use_id === undefined ? 'query' : 'call'}`)
+      if (e.tool !== 'Bash') return next(e)
       return { decision: engine, rule: 'Bash' }
     })
     await $.session.start(SESSION)
@@ -146,7 +154,9 @@ describe('register', () => {
     expect(yes.deny).toBeUndefined()
     expect(w.kept.asked.length).toBe(1)
     expect(w.kept.asked[0]).toContain('Git push is set to Ask')
-    expect(checked).toEqual(['git push origin main'])
+    // In order: Project Sentinel's own query of the verdict, the question dialog's own check, then Claude
+    // Code's check of the push as the call passes on.
+    expect(checked).toEqual(['Bash:query', 'AskUserQuestion:call', 'Bash:call'])
     // A no refuses it, and what the person typed reaches Claude.
     w.live.askAnswer = 'not from main'
     const no = await $.tool.call({ tool: 'Bash', command: 'git push origin main' })
@@ -158,8 +168,9 @@ describe('register', () => {
     expect(w.kept.asked.length).toBe(2)
     // Claude Code refuses it (a settings deny): no question, and the call goes on to be refused there.
     engine = 'deny'
-    await $.tool.call({ tool: 'Bash', command: 'npm install zod' })
+    const denied = await $.tool.call({ tool: 'Bash', command: 'npm install zod' })
     expect(w.kept.asked.length).toBe(2)
+    expect(denied.isError).toBe(true)
     // Default categories are never asked about.
     engine = 'allow'
     const plain = await $.tool.call({ tool: 'Bash', command: 'ls' })

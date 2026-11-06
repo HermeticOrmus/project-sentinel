@@ -169,7 +169,7 @@ export function classicSystems(): SystemSettings {
     answers: { style: 'standard' },
     cache: { keepWarm: false, maxIdleMinutes: 120, minTokens: 20_000, guardModelSwitch: true, stablePolicies: true, coldResume: true, coldResumeTokens: 100_000 },
     ops: { decisions: true, watchers: true, scout: 'suggest' },
-    plan: { rate: false },
+    plan: { rate: false, gates: false, economyAt: 60, parkAt: 85, holdAt: 95, economy: { thresholdTokens: 150_000, explore: 'haiku', forks: 'deny' } },
   }
 }
 
@@ -216,6 +216,8 @@ const isRecord = (v: unknown): v is Record<string, unknown> =>
 
 const bool = (v: unknown, d: boolean): boolean => (typeof v === 'boolean' ? v : d)
 
+const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
+
 const num = (v: unknown, d: number, min: number, max: number, isInteger = true): number => {
   if (typeof v !== 'number' || !Number.isFinite(v)) return d
   const n = isInteger ? Math.round(v) : v
@@ -253,6 +255,14 @@ function normalizeSystems(raw: unknown, base: SystemSettings): SystemSettings {
   const ca = isRecord(r.cache) ? r.cache : {}
   const op = isRecord(r.ops) ? r.ops : {}
   const pl = isRecord(r.plan) ? r.plan : {}
+  const ple = isRecord(pl.economy) ? pl.economy : {}
+  // The gates' floors stay in rising order: a floor set stands, one left to its default bends down to a set floor
+  // under it, and two set out of order lift the higher mode's floor to the lower mode's.
+  const holdAt0 = num(pl.holdAt, base.plan.holdAt, 1, 99)
+  const parkAt0 = isNum(pl.parkAt) ? num(pl.parkAt, base.plan.parkAt, 1, 99) : Math.min(base.plan.parkAt, holdAt0)
+  const economyAt = isNum(pl.economyAt) ? num(pl.economyAt, base.plan.economyAt, 1, 99) : Math.min(base.plan.economyAt, parkAt0)
+  const parkAt = Math.max(parkAt0, economyAt)
+  const holdAt = Math.max(holdAt0, parkAt)
 
   const permissions = {} as Record<PermissionCategory, PermissionState>
   for (const category of PERMISSION_CATEGORIES) permissions[category] = permissionStateOf(pe[category], base.permissions[category])
@@ -332,7 +342,18 @@ function normalizeSystems(raw: unknown, base: SystemSettings): SystemSettings {
       watchers: bool(op.watchers, base.ops.watchers),
       scout: pick(op.scout, WATCHER_SCOUTS, base.ops.scout),
     },
-    plan: { rate: bool(pl.rate, base.plan.rate) },
+    plan: {
+      rate: bool(pl.rate, base.plan.rate),
+      gates: bool(pl.gates, base.plan.gates),
+      economyAt,
+      parkAt,
+      holdAt,
+      economy: {
+        thresholdTokens: num(ple.thresholdTokens, base.plan.economy.thresholdTokens, 10_000, 10_000_000),
+        explore: pick(ple.explore, MODEL_ALIASES, base.plan.economy.explore),
+        forks: pick(ple.forks, ['allow', 'deny'] as const, base.plan.economy.forks),
+      },
+    },
   }
 }
 

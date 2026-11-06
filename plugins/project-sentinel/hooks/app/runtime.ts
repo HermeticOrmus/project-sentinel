@@ -45,6 +45,7 @@ import * as Handoff from '../features/handoff'
 import * as Ops from '../features/ops'
 import * as Plan from '../features/plan'
 import * as PlanUsage from '../features/planUsage'
+import * as PlanGate from '../features/planGate'
 import * as Quest from '../features/quest'
 import { VALIDATION_LABEL, summarize } from '../features/validation'
 import { groupOf } from '../features/digest'
@@ -149,7 +150,15 @@ export class Runtime {
   planUsage: PlanUsage.PlanUsage = PlanUsage.emptyPlanUsage()
   /** The windows' readings kept for the burn rate (`plan.rate`); loaded with the settings, empty until then. */
   planSamples: PlanUsage.PlanSamples = PlanUsage.emptySamples()
-  /** While a five-hour window counts down to its reset: one look a minute (usage is read, never pushed, between responses). */
+  /** The plan gates' state (`plan.gates`): the pressure the 7-day window puts on the run. Effects come in later steps; here it is read and traced. */
+  planGate: PlanGate.PlanGate = PlanGate.initialPlanGate()
+  /**
+   * When a response last carried the 7-day window: a measurement that moved the cost or the windows, a
+   * read after a step's response or an answered turn, or a minute look whose figure moved. Not the
+   * startup read (the engine's figure from before), not an aborted turn's. The gates' freshness; null before any.
+   */
+  private planSeenAt: number | null = null
+  /** While a five-hour window counts down to its reset, or a plan gate holds: one look a minute (usage is read, never pushed, between responses). */
   private usageTicker: { cancel: () => void } | null = null
 
   autopilot: Autopilot.Autopilot = Autopilot.initialAutopilot()
@@ -1364,14 +1373,18 @@ export class Runtime {
     return this.root === '' ? file : `${this.root.replace(/[\\/]+$/, '')}${sep}${file}`
   }
 
-  /** `isAfterAnswer`: read right after a turn of the main conversation was answered (an API response has come back). */
-  async refreshUsage(withSummary = false, isAfterAnswer = false): Promise<void> {
+  /**
+   * `isAfterAnswer`: read right after a turn of the main conversation was answered (an API response has
+   * come back). `isReported`: a response just came, so the windows read are its (an answered turn's, a
+   * step's); the startup read and an aborted turn's carry the engine's figure from before.
+   */
+  async refreshUsage(withSummary = false, isAfterAnswer = false, isReported = isAfterAnswer): Promise<void> {
     const host = this.host
     if (host === null) return
     const usage = await (withSummary ? host.usageSummary() : host.usage()).catch(() => null)
     if (usage === null) return
     this.applyUsage(usage)
-    this.notePlanUsage(usage.rateLimits, isAfterAnswer)
+    this.notePlanUsage(usage.rateLimits, isAfterAnswer, isReported)
     if (withSummary) {
       const at = usage.context.breakdown?.autoCompactThreshold
       this.autoCompactAt = usage.context.breakdown?.isAutoCompactEnabled === false ? undefined : at
@@ -1397,14 +1410,19 @@ export class Runtime {
   /**
    * The plan's rate-limit windows, as a response reported them (a measurement, a read after a turn or
    * on the minute). Redrawn when they say something new; the minute look runs only while a five-hour
-   * window counts down, so an API-key session (no windows) or a reset window costs nothing.
+   * window counts down or a plan gate holds, so an API-key session (no windows) or a reset window
+   * costs nothing. `isReported`: a response just carried the list; the startup read and the minute
+   * look re-read the engine's figure instead, which is fresh only where it moved from an earlier one.
    */
-  notePlanUsage(rateLimits: readonly PlanUsage.RateLimitReading[], isAfterAnswer = false): void {
+  notePlanUsage(rateLimits: readonly PlanUsage.RateLimitReading[], isAfterAnswer = false, isReported = true): void {
     // A claude.ai plan's rate-limit windows: the one-hour cache is Claude Code's default for its main conversation.
     if (rateLimits.some(r => r.kind === 'five_hour' || r.kind === 'seven_day')) this.cache.notePlan()
     const before = this.planUsage
     this.planUsage = PlanUsage.readWindows(before, rateLimits, this.clock(), isAfterAnswer)
+    const isMoved = before.sevenDay !== null && this.planUsage.sevenDay !== before.sevenDay
+    if ((isReported || isMoved) && rateLimits.some(r => r.kind === 'seven_day')) this.planSeenAt = this.clock()
     if (this.settings.plan.rate && this.planUsage !== before) this.keepPlanSamples()
+    this.stepPlanGate()
     if (this.planUsage !== before) {
       const five = this.planUsage.fiveHour
       if (five !== before.fiveHour || this.planUsage.isAbsent !== before.isAbsent) {
@@ -1445,20 +1463,41 @@ export class Runtime {
   private syncUsageTicker(): void {
     const host = this.host
     if (host === null) return
-    const isWanted = PlanUsage.isTicking(this.planUsage, this.clock())
+    const isWanted = PlanUsage.isTicking(this.planUsage, this.clock()) || PlanGate.isTicking(this.planGate, this.clock())
     if (isWanted && this.usageTicker === null) {
       this.usageTicker = host.every(60_000, () => {
         // The countdown moves on, and a reading may have come from a request no measurement reported.
         this.publisher.mark('hud', 'pane')
         void host
           .usage()
-          .then(u => this.notePlanUsage(u.rateLimits))
+          .then(u => this.notePlanUsage(u.rateLimits, false, false))
           .catch(() => this.syncUsageTicker())
       })
     } else if (!isWanted && this.usageTicker !== null) {
       this.usageTicker.cancel()
       this.usageTicker = null
     }
+  }
+
+  /** A step of the gates over the window kept now and the settings' floors: after each reading, and when the settings change. */
+  stepPlanGate(): void {
+    const input: PlanGate.PlanGateInput = { sevenDay: this.planUsage.sevenDay, seenAt: this.planSeenAt, now: this.clock() }
+    this.notePlanGate(PlanGate.step(this.planGate, input, this.planGateConfig()))
+  }
+
+  planGateConfig(): PlanGate.PlanGateConfig {
+    const p = this.settings.plan
+    return { enabled: p.gates, economyAt: p.economyAt, parkAt: p.parkAt, holdAt: p.holdAt, staleMs: PlanGate.DEFAULT_STALE_MS }
+  }
+
+  /** A step of the gates: kept, traced when the pressure moved. (The modes' effects arrive with the economy, park and hold steps.) */
+  private notePlanGate(out: PlanGate.PlanGateStep): void {
+    const before = this.planGate
+    this.planGate = out.model
+    for (const e of out.effects) {
+      if (e.kind === 'pressure') this.trace(`plan gates: ${e.from} → ${e.to}${e.percent === null ? '' : ` (7-day ${e.percent}%)`}`)
+    }
+    if (before !== out.model) this.publisher.mark('hud', 'pane')
   }
 
   configureAutopilot(): void {
@@ -2402,7 +2441,7 @@ export class Runtime {
     // The plan's rate-limit windows arrive with the first response: with the lifetime unknown, look once a minute at most.
     if (this.cache.state.ttl === null && !this.cache.isPlan && Date.now() - this.planCheckedAt > 60_000) {
       this.planCheckedAt = Date.now()
-      void this.refreshUsage()
+      void this.refreshUsage(false, false, true)
     }
     const tokens = u.input_tokens + u.cache_read_input_tokens + u.cache_creation_input_tokens + u.output_tokens
     this.usage = { ...this.usage, tokens, pct: this.usage.window ? Math.round((100 * tokens) / this.usage.window) : this.usage.pct }
@@ -2412,7 +2451,7 @@ export class Runtime {
     // after each step (seen live: one measurement in a 13-step turn), and Finish the milestone must act mid-turn.
     if (result.stopReason === 'tool_use' && this.ops.isCostWatched() && this.clock() - this.budgetCostAt >= BUDGET_COST_EVERY_MS) {
       this.budgetCostAt = this.clock()
-      void this.refreshUsage().then(() => this.ops.checkBudget())
+      void this.refreshUsage(false, false, true).then(() => this.ops.checkBudget())
     }
     if (result.stopReason === 'tool_use' && this.settings.autopilot.enabled) {
       this.stepAutopilot({ kind: 'context', tokens, window: this.usage.window, isInTurn: true, now: Date.now() })
@@ -2463,7 +2502,9 @@ export class Runtime {
 
   onMeasure(input: Pick<SessionUsage, 'context' | 'cost'> & { rateLimits?: readonly PlanUsage.RateLimitReading[]; changed?: readonly string[] }): void {
     this.applyUsage(input)
-    if (input.rateLimits !== undefined) this.notePlanUsage(input.rateLimits)
+    // A measurement names what moved: a response moves the cost or the windows; one that moved the context alone (a clear) carries the last response's figures.
+    const isResponse = input.changed === undefined || input.changed.includes('cost') || input.changed.includes('rateLimits')
+    if (input.rateLimits !== undefined) this.notePlanUsage(input.rateLimits, false, isResponse)
     // The session's cost grew with no turn of the conversation running: Claude Code sent a request of its own.
     if (input.changed?.includes('cost') === true && !this.turn.isRunning) this.cache.noteSideRequest(this.clock())
   }
@@ -2991,6 +3032,8 @@ export class Runtime {
     const before = input.before
     this.configureAutopilot()
     if (before !== undefined && !before.plan.rate && this.settings.plan.rate) void this.loadPlanSamples()
+    this.stepPlanGate()
+    this.syncUsageTicker()
     if (!this.turn.isRunning) this.cache.schedule()
     if (host !== null && this.settings.ui.companion && this.companionTicker === null) {
       this.companionTicker = host.every(60_000, () => this.publisher.mark('hud'))

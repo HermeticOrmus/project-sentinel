@@ -263,6 +263,15 @@ Operations → *Run budget* or with `/cr budget`, and is off until you set one:
 | Key | Values | Default | What it does |
 |---|---|---|---|
 | `rate` | `true`, `false` | `false` | Keep each plan window's readings in the store where they moved (a move within five minutes of the last kept reading replaces it: at most one per five minutes, 288 per window; a lower percent or another reset time is a new window and starts afresh) and show the window's pace beside its reading in `/cr status` and Context → Run: the percent per hour over the last six hours, and when it would be full at that pace counted from now, where that comes before its reset. Derived from Claude Code's own readings; nothing below two readings, ten minutes between them, or when the last reading is older than fifteen minutes. |
+| `gates` | `true`, `false` | `false` | The plan gates: the 7-day window's percent sets a pressure on the run (`normal`, `economy`, `parking`, `hold`). The pressure rises only on a fresh reading of the same window and falls only when the window changes (another reset time, the reset time passing, or a reading ten points under the mode's floor; a wobble under the floor keeps the mode); changed floors read the last reading afresh. A reading is fresh while a response carried it within the last ten minutes (the engine's figure read at startup, or on the minute, counts only once it moves); without a 7-day reading (an API key, no response yet) there is no pressure, a stale reading moves nothing, and a look a minute catches the reset while a mode holds. The modes' effects come with the economy, park and hold steps; until then the pressure is read and traced. |
+| `economyAt` | 1–99 | 60 | From this percent: economy. |
+| `parkAt` | 1–99 | 85 | From this percent: finish the turn, write the handoff, park until the reset. |
+| `holdAt` | 1–99 | 95 | From this percent: no automated turn until the reset; the person's own prompts still run. |
+| `economy.thresholdTokens` | 10,000–10,000,000 | 150,000 | The hand-off point under economy. |
+| `economy.explore` | `session`, `haiku`, `sonnet`, `opus`, `fable` | `haiku` | The model Explore agents get under economy. |
+| `economy.forks` | `allow`, `deny` | `deny` | Whether a fork (an agent that inherits the whole context) may start under economy. |
+
+The three floors stay in rising order: a floor you set stands, a floor left to its default bends down to one you set below it (`holdAt: 50` alone gives 50, 50, 50), and two you set out of order lift the higher mode's floor to the lower mode's (`economyAt: 70, parkAt: 50` gives 70, 70).
 
 ### Subagents (`subagents`)
 

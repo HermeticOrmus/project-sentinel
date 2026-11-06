@@ -17,6 +17,13 @@ match. `claude plugin tag plugins/project-sentinel` checks this when tagging a r
   estimated beyond Claude Code's own readings: no pace below two readings, ten minutes between them, or when the last
   reading is older than fifteen minutes. Turning the setting on mid-session reads the kept readings back.
 
+- **The plan gates' pressure** (`plan.gates`, off by default; `economyAt` 60, `parkAt` 85, `holdAt` 95 percent of the 7-day
+  window). A pure state machine (`features/planGate.ts`) reads the 7-day window into a pressure: `normal`, `economy`,
+  `parking`, `hold`. It rises only on a fresh reading of the same window (one a response carried within ten minutes) and
+  falls only when the window changes (another reset time, the reset time passing, or a reading ten points under the mode's
+  floor); changed floors read the last reading afresh. Without a 7-day reading there is no pressure, a stale reading moves
+  nothing, and a look a minute catches the reset while a mode holds. The Runtime keeps and traces it. No effect runs yet.
+
 ### Fixed
 
 - The two `register` tests that counted a stand-in `tool.check` handler follow Claude Code 2.1.307's contract, under

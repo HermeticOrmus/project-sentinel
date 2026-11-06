@@ -31,6 +31,12 @@ match. `claude plugin tag plugins/project-sentinel` checks this when tagging a r
   cost, time, handoffs, and what happens at one), said in the run's log as "Run budget from the settings"; a budget set in
   Operations or with `/cr budget` overrides it for the run, and a run resumed with Claude Code's own resume keeps the
   budget it had. A profile that carries one applies it from the next run.
+- **Plan alerts** (`plan.alerts`, empty by default). At each percent listed, once per 7-day window on this machine (at
+  most once per session), a
+  native notification through the person's own channel (`ui.notify`: their `Notification` hooks run first, with
+  `notification_type: plugin_notification` and the title `Plan`), naming the window's percent, the threshold crossed and the
+  reset time. Where no channel wrote it in words, a toast on the surface at hand; headless, the hooks alone run; a hook's
+  refusal, deny or failed write stands with no toast. The one new engine call of this release, listed in SECURITY.md.
 
 ### Fixed
 

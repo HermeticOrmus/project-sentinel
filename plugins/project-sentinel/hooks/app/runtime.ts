@@ -46,6 +46,7 @@ import * as Ops from '../features/ops'
 import * as Plan from '../features/plan'
 import * as PlanUsage from '../features/planUsage'
 import * as PlanGate from '../features/planGate'
+import * as PlanAlerts from '../features/planAlerts'
 import * as Quest from '../features/quest'
 import { VALIDATION_LABEL, summarize } from '../features/validation'
 import { groupOf } from '../features/digest'
@@ -158,6 +159,14 @@ export class Runtime {
    * startup read (the engine's figure from before), not an aborted turn's. The gates' freshness; null before any.
    */
   private planSeenAt: number | null = null
+  /** The plan alerts raised for the current 7-day window (`plan.alerts`): the store's, joined with this session's own. */
+  private planAlerts: PlanAlerts.PlanAlertState | null = null
+  /** The alerts go one at a time: a reading that lands while one is read against the store waits for it; a failure never stops the next. */
+  private alerting: Promise<void> = Promise.resolve()
+
+  private queuePlanAlert(): void {
+    this.alerting = this.alerting.then(() => this.notePlanAlert()).catch((error: unknown) => this.trace(`plan alert: failed (${error instanceof Error ? error.message : String(error)})`))
+  }
   /** While a five-hour window counts down to its reset, or a plan gate holds: one look a minute (usage is read, never pushed, between responses). */
   private usageTicker: { cancel: () => void } | null = null
 
@@ -1438,6 +1447,7 @@ export class Runtime {
     if ((isReported || isMoved) && rateLimits.some(r => r.kind === 'seven_day')) this.planSeenAt = this.clock()
     if (this.settings.plan.rate && this.planUsage !== before) this.keepPlanSamples()
     this.stepPlanGate()
+    if (this.settings.plan.alerts.length > 0 && this.planUsage.sevenDay !== before.sevenDay) this.queuePlanAlert()
     if (this.planUsage !== before) {
       const five = this.planUsage.fiveHour
       if (five !== before.fiveHour || this.planUsage.isAbsent !== before.isAbsent) {
@@ -1498,6 +1508,49 @@ export class Runtime {
   stepPlanGate(): void {
     const input: PlanGate.PlanGateInput = { sevenDay: this.planUsage.sevenDay, seenAt: this.planSeenAt, now: this.clock() }
     this.notePlanGate(PlanGate.step(this.planGate, input, this.planGateConfig()))
+  }
+
+  /**
+   * The plan alerts (`plan.alerts`): a threshold crossed for this window, not raised yet on this
+   * machine, is raised once through the person's own channel; refused, it shows as a toast. The
+   * state is read from the store right before, so the sessions on one machine do not each raise it.
+   */
+  private async notePlanAlert(): Promise<void> {
+    const host = this.host
+    if (host === null || this.settings.plan.alerts.length === 0) return
+    // The store's list joined with this session's own for this window: a write that failed, a store reset by hand, or another
+    // session's write never raises one twice from here.
+    const sevenDay = this.planUsage.sevenDay
+    const now = this.clock()
+    const stored = PlanAlerts.planAlertsOf(await host.storeGet(STORE_ENTRIES.planAlerts).catch(() => undefined))
+    const kept = PlanAlerts.merged(stored, this.planAlerts, sevenDay, now)
+    const { state, alert } = PlanAlerts.dueAlert(kept, sevenDay, this.settings.plan.alerts, now)
+    this.planAlerts = state
+    // The store's list left behind by this reading (a new window) is written over at once, whatever this session held, so a
+    // list from the old window without a reset time is not read into this one by a later reading: one write per window.
+    if (alert === null && !PlanAlerts.isStale(stored, sevenDay, now)) return
+    await host.storeSet(STORE_ENTRIES.planAlerts, state).catch(() => undefined)
+    if (alert === null) return
+    const text = PlanAlerts.alertWords(alert)
+    const sent = await host.notify(text, 'Plan')
+    // The person's Notification hooks ran whatever the channel did (measured on 2.1.319: a headless session runs them, then
+    // answers `no-surface`). A toast stands in wherever there is a surface to show it, unless a hook above (another mod's
+    // `ui.notify` hook) refused (`refused`) or the call was rejected (`rejected`: a hook's deny or a failed write, which the
+    // engine reports the same way, so neither gets a toast) or the channel wrote it in words; `terminal_bell` rings without
+    // any. A toast that throws is said on this line, after what the notification did: the alert was raised either way.
+    const isRefused = !sent.isSent && (sent.reason === 'refused' || sent.reason === 'rejected')
+    const isToast = (sent.isSent ? sent.channel === 'terminal_bell' : !isRefused) && this.surfaces.length > 0 && this.settings.ui.toasts
+    const how = sent.isSent ? `sent (${sent.channel})` : sent.reason === 'rejected' ? `rejected (${sent.detail ?? 'a hook said no'})` : sent.reason === 'refused' ? 'refused by a hook above' : `raised through the Notification hooks, no channel wrote it (${sent.reason})`
+    let toast = ''
+    if (isToast) {
+      try {
+        host.toast(`Plan alert: ${text}`, 8000)
+        toast = ', shown as a toast'
+      } catch (error) {
+        toast = `, the toast failed (${error instanceof Error ? error.message : String(error)})`
+      }
+    }
+    this.trace(`plan alert: ${text}, ${how}${toast}`)
   }
 
   planGateConfig(): PlanGate.PlanGateConfig {
@@ -3064,6 +3117,8 @@ export class Runtime {
     const before = input.before
     this.configureAutopilot()
     if (before !== undefined && !before.plan.rate && this.settings.plan.rate) void this.loadPlanSamples()
+    // Alerts set or changed mid-window: the reading at hand is read against them at once.
+    if (before !== undefined && this.settings.plan.alerts.length > 0 && before.plan.alerts.join(',') !== this.settings.plan.alerts.join(',')) this.queuePlanAlert()
     this.stepPlanGate()
     this.syncUsageTicker()
     if (!this.turn.isRunning) this.cache.schedule()

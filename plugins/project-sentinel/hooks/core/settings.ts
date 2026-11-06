@@ -172,7 +172,7 @@ export function classicSystems(): SystemSettings {
     answers: { style: 'standard' },
     cache: { keepWarm: false, maxIdleMinutes: 120, minTokens: 20_000, guardModelSwitch: true, stablePolicies: true, coldResume: true, coldResumeTokens: 100_000 },
     ops: { decisions: true, watchers: true, scout: 'suggest', budget: null },
-    plan: { rate: false, gates: false, economyAt: 60, parkAt: 85, holdAt: 95, economy: { thresholdTokens: 150_000, explore: 'haiku', forks: 'deny' } },
+    plan: { rate: false, gates: false, economyAt: 60, parkAt: 85, holdAt: 95, economy: { thresholdTokens: 150_000, explore: 'haiku', forks: 'deny' }, alerts: [] },
   }
 }
 
@@ -243,6 +243,13 @@ const budgetDefaultOf = (v: unknown, d: DefaultBudget | null): DefaultBudget | n
     atLimit: pick(v.atLimit, ['notify', 'ask', 'finish'] as const, 'ask'),
   }
   return budget.costUsd === null && budget.durationMs === null && budget.handoffs === null ? null : budget
+}
+
+/** A list of percents, whole, unique, rising: an entry out of 1 to 100 or not a number is dropped, the highest ten kept; not a list reads as the default. */
+const percentsOf = (v: unknown, d: readonly number[]): number[] => {
+  if (!Array.isArray(v)) return [...d]
+  const list = v.filter(isNum).map(n => Math.round(n)).filter(n => n >= 1 && n <= 100)
+  return [...new Set(list)].sort((a, b) => a - b).slice(-10)
 }
 
 const num = (v: unknown, d: number, min: number, max: number, isInteger = true): number => {
@@ -381,6 +388,7 @@ function normalizeSystems(raw: unknown, base: SystemSettings): SystemSettings {
         explore: pick(ple.explore, MODEL_ALIASES, base.plan.economy.explore),
         forks: pick(ple.forks, ['allow', 'deny'] as const, base.plan.economy.forks),
       },
+      alerts: percentsOf(pl.alerts, base.plan.alerts),
     },
   }
 }

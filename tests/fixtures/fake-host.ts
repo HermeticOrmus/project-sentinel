@@ -51,6 +51,8 @@ export function fakeHost(
     submitted: [] as string[],
     commands: [] as string[],
     toasts: [] as string[],
+    /** Each native notification raised (`host.notify`), its title and text. */
+    notified: [] as { title: string; text: string }[],
     statuses: [] as (string | undefined)[],
     store: {} as Record<string, unknown>,
     published: {} as Record<string, unknown>,
@@ -95,6 +97,8 @@ export function fakeHost(
   }
   const live = {
     usage: { startedAt: 0, context: { tokens: 10_000, window: 1_000_000, percent: 1 }, rateLimits: [], cost: { usd: 0.5 } } as SessionUsage,
+    /** What `host.notify` answers: sent, or refused with a reason. */
+    notifyResult: { isSent: true, channel: 'kitty' } as { isSent: true; channel: string } | { isSent: false; reason: string; detail?: string },
     sessionId: 'S1',
     /** Whether the prompt box takes text back (the terminal's does; an SDK host has none). */
     isPromptBox: true,
@@ -218,6 +222,10 @@ export function fakeHost(
       return { isAnswered: true as const, text: 'ok', usage: { input_tokens: 20, output_tokens: 2, cache_read_input_tokens: live.forkRead, cache_creation_input_tokens: live.forkRead === 0 ? 300_000 : 0 } }
     },
     toast: text => void kept.toasts.push(text),
+    notify: async (text, title) => {
+      kept.notified.push({ title, text })
+      return live.notifyResult
+    },
     status: text => void kept.statuses.push(text),
     trace: text => void kept.traces.push(text),
     open: async pane => {

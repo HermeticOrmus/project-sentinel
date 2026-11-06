@@ -142,6 +142,12 @@ export type ControlRoomSettings = {
     holdAt: number
     /** What economy means: the handoff point in tokens, the model Explore agents get, and whether a fork may start. */
     economy: { thresholdTokens: number; explore: ModelAlias; forks: 'allow' | 'deny' }
+    /**
+     * Percents of the 7-day window at which a native notification is raised through your own
+     * channel (`ui.notify`; your `Notification` hooks run first), once each per window on this
+     * machine. Empty by default. Without a channel, a toast stands in; headless, the hooks alone run.
+     */
+    alerts: number[]
   }
   /**
    * `liveLoad`: machine-wide CPU and memory in the status bar (runs the sampler). `companion`: the

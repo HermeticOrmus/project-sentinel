@@ -103,6 +103,14 @@ export type Host = {
   fork(prompt: string): Promise<ModelForkResult>
 
   toast(text: string, timeoutMs?: number): void
+  /**
+   * A native notification through the person's own channel (`$.ui.notify`): their `Notification`
+   * hooks run first (reading `plugin_notification`), then the channel writes. Never throws: the
+   * engine's own refusals come back as `isSent: false` with its reason (`disabled`, `no-channel`,
+   * `no-surface`, `refused`), and a rejection (a hook's deny, a failed write) as `rejected` with
+   * its words in `detail`. Sent, `channel` names what wrote it (`terminal_bell` rings without words).
+   */
+  notify(text: string, title: string): Promise<{ isSent: true; channel: string } | { isSent: false; reason: string; detail?: string }>
   status(text: string | undefined): void
   open(pane: PaneOpenArgs): Promise<UiOpenResult>
   close(pane: PaneCloseArgs): Promise<void>

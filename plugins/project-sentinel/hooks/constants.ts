@@ -30,6 +30,8 @@ export const STORE_ENTRIES = {
   onboarding: 'onboarding.v1',
   /** The plan windows' readings over time: the burn rate's samples (`plan.rate`). */
   plan: 'plan.v1',
+  /** The plan alerts raised for the current 7-day window (`plan.alerts`), shared by every session on the machine. */
+  planAlerts: 'planAlerts.v1',
 } as const
 
 /** The handoff file Context Autopilot asks Claude to create or update. */

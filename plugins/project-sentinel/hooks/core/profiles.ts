@@ -171,6 +171,7 @@ const LABELS: Record<string, string> = {
   'plan.economy.thresholdTokens': 'Economy hand-off point',
   'plan.economy.explore': 'Economy model for Explore agents',
   'plan.economy.forks': 'Economy forks',
+  'plan.alerts': 'Plan alerts',
   'guard.enabled': 'Lazy-exit guard',
   'guard.strictness': 'Guard strictness',
   'guard.maxPerTurn': 'Guard nudges per turn',
@@ -231,6 +232,7 @@ const UNITS: Record<string, (n: number) => string> = {
   'plan.parkAt': n => `${n}%`,
   'plan.holdAt': n => `${n}%`,
   'plan.economy.thresholdTokens': n => fmtTokens(n),
+  'plan.alerts': n => `${n}%`,
   'resources.cpu': n => `${n}%`,
   'resources.ram': n => `${n}%`,
   'resources.intervalSec': n => `${n} s`,
@@ -252,6 +254,7 @@ function show(path: string, v: unknown): string {
   if (typeof v === 'boolean') return v ? 'On' : 'Off'
   if (typeof v === 'number') return UNITS[path]?.(v) ?? String(v)
   if (typeof v === 'string') return VALUE_LABELS[path]?.[v] ?? (/^[a-z]+$/.test(v) ? v.charAt(0).toUpperCase() + v.slice(1) : v)
+  if (Array.isArray(v)) return v.length === 0 ? 'Off' : v.map(x => (typeof x === 'number' ? (UNITS[path]?.(x) ?? String(x)) : String(x))).join(', ')
   return JSON.stringify(v)
 }
 

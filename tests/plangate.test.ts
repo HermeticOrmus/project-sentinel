@@ -145,8 +145,8 @@ describe('the plan gates', () => {
   test('the settings keep the floors in rising order around the ones set, and validate the economy keys', () => {
     const base = defaultSettings()
     const s = normalizeSettings({ ...base, plan: { gates: true, economyAt: 70, parkAt: 50, holdAt: 10, economy: { thresholdTokens: 5, explore: 'nope', forks: 'maybe' } } })
-    expect(s.plan).toEqual({ rate: false, gates: true, economyAt: 70, parkAt: 70, holdAt: 70, economy: { thresholdTokens: 10_000, explore: 'haiku', forks: 'deny' } })
-    expect(normalizeSettings(undefined).plan).toEqual({ rate: false, gates: false, economyAt: 60, parkAt: 85, holdAt: 95, economy: { thresholdTokens: 150_000, explore: 'haiku', forks: 'deny' } })
+    expect(s.plan).toEqual({ rate: false, gates: true, economyAt: 70, parkAt: 70, holdAt: 70, economy: { thresholdTokens: 10_000, explore: 'haiku', forks: 'deny' }, alerts: [] })
+    expect(normalizeSettings(undefined).plan).toEqual({ rate: false, gates: false, economyAt: 60, parkAt: 85, holdAt: 95, economy: { thresholdTokens: 150_000, explore: 'haiku', forks: 'deny' }, alerts: [] })
     // A floor set alone stands; the ones left to their defaults bend down to it.
     const floors = (plan: Record<string, unknown>) => {
       const p = normalizeSettings({ ...base, plan }).plan

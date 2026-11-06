@@ -373,6 +373,21 @@ describe('the plan alerts', () => {
     expect(g.kept.notified.map(n => n.text)).toEqual(['7-day plan window at 55% (past 50%)', '7-day plan window at 55% (past 50%, resets 2026-11-09 00:00Z)', '7-day plan window at 80% (past 75%, resets 2026-11-09 00:00Z)'])
   })
 
+  test('a Claude Code without ui.notify: the alert shows as a toast and the trace says no hook ran', async () => {
+    const f = fakeHost()
+    f.kept.store['settings.v1'] = { ...defaultSettings(), plan: { ...defaultSettings().plan, alerts: [50] } }
+    f.live.notifyResult = { isSent: false, reason: 'unsupported' }
+    const rt = new Runtime()
+    rt.bind(f.host)
+    await rt.onSessionStart({ cwd: '/work', surface: 'terminal', isInteractive: true })
+    await f.advance(200)
+    rt.onMeasure({ context: f.live.usage.context, cost: { usd: 0.6 }, rateLimits: [{ kind: 'seven_day', percentUsed: 60, resetsAt: new Date(Date.UTC(2026, 10, 9, 0, 0)).toISOString() }], changed: ['rateLimits'] })
+    await f.advance(10)
+    expect(f.kept.toasts.at(-1)).toBe('Plan alert: 7-day plan window at 60% (past 50%, resets 2026-11-09 00:00Z)')
+    expect(f.kept.traces.at(-1)).toBe('plan alert: 7-day plan window at 60% (past 50%, resets 2026-11-09 00:00Z), not raised: this Claude Code has no ui.notify, so no hook ran, shown as a toast')
+    expect(f.kept.store['planAlerts.v1']).toEqual({ resetsAt: Date.UTC(2026, 10, 9, 0, 0), raised: [50] })
+  })
+
   test('with no alerts set (the default) nothing is read, notified or stored', async () => {
     const f = fakeHost()
     f.kept.store['settings.v1'] = defaultSettings()

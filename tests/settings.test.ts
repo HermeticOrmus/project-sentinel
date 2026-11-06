@@ -84,7 +84,38 @@ describe('settings', () => {
 
 describe('profiles', () => {
   test('built-in profiles are listed in order', () => {
-    expect(listProfiles(defaultSettings()).map(p => p.id)).toEqual(['normal', 'frontier', 'low-resource', 'release-qa', 'classic'])
+    expect(listProfiles(defaultSettings()).map(p => p.id)).toEqual(['normal', 'frontier', 'low-resource', 'release-qa', 'economy', 'classic'])
+  })
+
+  test('Economy is Normal with the plan gates, the burn rate, the alerts, a run budget, Autopilot at 25%, three subagents and Explore on Sonnet', () => {
+    const e = findProfile(defaultSettings(), 'economy')!
+    expect(e.isBuiltin).toBe(true)
+    expect(e.systems.plan).toEqual({ ...defaultSettings().plan, gates: true, rate: true, alerts: [50, 75, 90] })
+    expect(e.systems.ops.budget).toEqual({ costUsd: null, durationMs: null, handoffs: 4, atLimit: 'ask' })
+    expect(e.systems.autopilot).toMatchObject({ enabled: true, thresholdMode: 'percent', thresholdPercent: 25 })
+    expect(e.systems.subagents).toMatchObject({ mode: 'limit', limit: 3 })
+    expect(e.systems.router).toMatchObject({ strategy: 'custom', mainLoop: false, subagents: true, custom: { ...defaultSettings().router.custom, explore: 'sonnet' } })
+    expect(e.systems.frontier).toEqual(defaultSettings().frontier)
+    const applied = applyProfile(defaultSettings(), e)
+    expect(applied.profile).toBe('economy')
+    expect(isModified(applied)).toBe(false)
+    // A fresh install still starts on Normal.
+    expect(defaultSettings().profile).toBe('normal')
+    // The router custom: its models are in the diff, so a change to one reads as edited and is named; with the router off on
+    // both sides they stay out of it.
+    expect(diffSystems(defaultSettings(), e.systems).find(c => c.path === 'router.custom.explore')).toEqual({ path: 'router.custom.explore', label: 'Explore agents model', from: 'Haiku', to: 'Sonnet' })
+    const edited = { ...applied, router: { ...applied.router, custom: { ...applied.router.custom, explore: 'haiku' as const } } }
+    expect(isModified(edited)).toBe(true)
+    expect(diffSystems(e.systems, systemsOf(edited))).toEqual([{ path: 'router.custom.explore', label: 'Explore agents model', from: 'Sonnet', to: 'Haiku' }])
+    const base = defaultSettings()
+    const hidden = { ...base, router: { ...base.router, custom: { ...base.router.custom, explore: 'sonnet' as const } } }
+    expect(diffSystems(base, hidden)).toEqual([])
+    // The edited mark follows the same diff: a custom model changed while the router is off is not an edit of Normal.
+    expect(isModified(hidden)).toBe(false)
+    expect(profileLabel(hidden)).toBe('Normal')
+    expect(isModified({ ...hidden, router: { ...hidden.router, strategy: 'custom' } })).toBe(true)
+    // A model left to the session reads as the picker says it.
+    expect(diffSystems(e.systems, { ...e.systems, router: { ...e.systems.router, custom: { ...e.systems.router.custom, explore: 'session' } } })).toEqual([{ path: 'router.custom.explore', label: 'Explore agents model', from: 'Sonnet', to: 'Session model' }])
   })
 
   test('Normal is the fresh-install defaults; Classic is Normal before 1.7; the other built-ins are what they always were', () => {

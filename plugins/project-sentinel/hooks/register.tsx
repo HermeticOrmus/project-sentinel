@@ -96,11 +96,17 @@ function hostOf($: EngineInterface): Host {
     fork: prompt => $.model.fork({ prompt }),
 
     toast: (text, timeoutMs) => $.ui.toast(text, timeoutMs === undefined ? undefined : { timeoutMs }),
+    // A Claude Code without the call (older than the types here) throws at the call, not a function: `unsupported`, so a
+    // toast stands in and the trace says no hook ran. (The engine's source rule allows `$.ui.notify` only as a call.)
     notify: (text, title) =>
       Promise.resolve()
         .then(() => $.ui.notify(text, { title }))
         .then(r => (r.isSent ? { isSent: true as const, channel: r.channel } : { isSent: false as const, reason: r.reason }))
-        .catch((error: unknown) => ({ isSent: false as const, reason: 'rejected', detail: error instanceof Error ? error.message : String(error) })),
+        .catch((error: unknown) =>
+          error instanceof TypeError && error.message.includes('is not a function')
+            ? { isSent: false as const, reason: 'unsupported' }
+            : { isSent: false as const, reason: 'rejected', detail: error instanceof Error ? error.message : String(error) },
+        ),
     status: text => $.ui.status(text),
     open: pane => $.ui.open(pane),
     close: pane => $.ui.close(pane),

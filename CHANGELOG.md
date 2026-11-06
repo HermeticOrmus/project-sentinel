@@ -6,10 +6,22 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and ver
 `plugins/project-sentinel/.claude-plugin/plugin.json` and in `.claude-plugin/marketplace.json` must
 match. `claude plugin tag plugins/project-sentinel` checks this when tagging a release.
 
-## [Unreleased]
+## [1.8.0] - 2026-11-06
+
+The plan's week, kept in view and never run out mid-task. A claude.ai plan's 7-day window is shared by every
+machine on the account, and a chain of long runs on one machine spent a whole week's budget before anyone saw it
+coming. This release reads the 7-day window into a pressure with soft gates (economy, park, hold), shows the
+burn rate beside the reading, raises alerts through the person's own notification channel, starts every run with
+a budget when asked to, and ships an Economy profile that turns it all on. Nothing stops a turn under way, and
+the person's own prompts always run (a run budget at its limit asks first).
 
 ### Added
 
+- **The Economy profile**: Normal with `plan.gates`, `plan.rate`, `plan.alerts` 50, 75 and 90, `ops.budget` of four
+  handoffs then one question, Autopilot at 25%, at most three subagents, and the router custom (subagents on Sonnet,
+  Explore too; Plan agents keep the session model; the main conversation unrouted). Existing installs keep their
+  profile. A custom profile saved as "Economy" before 1.8.0 stays active, though `/cr profile economy` now applies the
+  built-in one and the picker lists both: rename or delete the custom one.
 - **The plan's pace** (`plan.rate`, off by default). Each window's readings are kept in the store under `plan.v1` where
   they moved (at most one per five minutes; a lower percent or another reset time starts the window afresh), and the
   detail line says how fast the window moves over its last six hours and when it would be full at that pace, counted
@@ -47,10 +59,15 @@ match. `claude plugin tag plugins/project-sentinel` checks this when tagging a r
   native notification through the person's own channel (`ui.notify`: their `Notification` hooks run first, with
   `notification_type: plugin_notification` and the title `Plan`), naming the window's percent, the threshold crossed and the
   reset time. Where no channel wrote it in words, a toast on the surface at hand; headless, the hooks alone run; a hook's
-  refusal, deny or failed write stands with no toast. The one new engine call of this release, listed in SECURITY.md.
+  refusal, deny or failed write stands with no toast. The one new engine call of this release, listed in SECURITY.md;
+  on a Claude Code without it the alert shows as a toast and no hook runs.
 
 ### Fixed
 
+- A change to one of the custom router's models (Explore agents on Haiku instead of Sonnet) marked the profile edited
+  with no change listed: the profile diff names it whenever either side routes custom ("Explore agents model: Sonnet
+  → Haiku"); with the router off on both sides those models stay out of the diff, as before, and the edited mark now
+  follows that same diff, so it never shows with nothing listed.
 - A new run is saved at once: a reload of the plugin within the save's delay (1.5 s) no longer starts a second run.
 - The two `register` tests that counted a stand-in `tool.check` handler follow Claude Code 2.1.307's contract, under
   which `tool.call`'s core runs `tool.check` through the hooks and `$.ui.ask` is a `tool.call` of AskUserQuestion.

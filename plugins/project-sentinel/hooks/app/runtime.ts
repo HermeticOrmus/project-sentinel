@@ -2215,8 +2215,9 @@ export class Runtime {
     this.noteActivity()
     // Without a running turn the prompt starts the next one: a notification's is that turn's whatever its text.
     if (turnId === undefined) this.nextTurn = origin?.kind === 'task-notification' ? 'notification' : null
-    // A new turn's effort can lift to Extra High when its own prompt reads as hard (frontier.autoEscalate).
-    if (turnId === undefined) this.frontier.turnClass = classifyTask(text).cls
+    // A new person turn's effort can lift to Extra High when the request reads as hard (frontier.autoEscalate);
+    // the plugin's own turns (handoff, continuation, a queued or decision prompt) carry no class, so they never escalate.
+    if (turnId === undefined) this.frontier.turnClass = isPersonOrigin(origin) ? classifyTask(text).cls : null
     if (origin?.kind === 'task-notification') {
       // Claude Code's own word that a background task ended (completed, failed, killed), as it is delivered.
       const task = Autopilot.notificationTask(text)

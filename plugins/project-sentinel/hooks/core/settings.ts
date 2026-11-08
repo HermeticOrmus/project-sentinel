@@ -147,7 +147,7 @@ export function classicSystems(): SystemSettings {
       autoContinue: true,
       waitMinutes: 20,
     },
-    frontier: { enabled: false, effort: 'max', subagentEffort: false },
+    frontier: { enabled: false, effort: 'max', subagentEffort: false, autoEscalate: false },
     qa: { enabled: false },
     guard: { enabled: false, strictness: 'standard', maxPerTurn: 2, maxPerSession: 12, modelCheck: true },
     router: {
@@ -185,7 +185,7 @@ export function classicSystems(): SystemSettings {
 export function defaultSystems(): SystemSettings {
   const s = classicSystems()
   s.autopilot = { ...s.autopilot, enabled: true, thresholdMode: 'percent', thresholdPercent: 70, continuation: 'clear', fallbackToCompact: true, autoContinue: true }
-  s.frontier = { enabled: true, effort: 'xhigh', subagentEffort: false }
+  s.frontier = { enabled: true, effort: 'xhigh', subagentEffort: false, autoEscalate: false }
   s.ops = { ...s.ops, decisions: true, watchers: true }
   s.progress = { milestones: true }
   return s
@@ -317,6 +317,7 @@ function normalizeSystems(raw: unknown, base: SystemSettings): SystemSettings {
       enabled: bool(fr.enabled, base.frontier.enabled),
       effort: pick(fr.effort, ['max', 'xhigh', 'high', 'keep'] as const, base.frontier.effort),
       subagentEffort: bool(fr.subagentEffort, base.frontier.subagentEffort),
+      autoEscalate: bool(fr.autoEscalate, base.frontier.autoEscalate),
     },
     qa: { enabled: bool(qa.enabled, base.qa.enabled) },
     guard: {

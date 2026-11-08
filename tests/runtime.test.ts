@@ -32,6 +32,33 @@ const step = (tokens: number, stop: 'tool_use' | 'end_turn') => ({
 })
 
 describe('runtime', () => {
+  test('auto-escalate lifts a hard main turn from High to Extra High; a routine turn stays High; off and subagents never do', async () => {
+    const mk = (autoEscalate: boolean) =>
+      started(s => {
+        s.frontier.enabled = true
+        s.frontier.effort = 'high'
+        s.frontier.autoEscalate = autoEscalate
+        s.router.strategy = 'off'
+      })
+    const mainStep = { turnId: 't1', index: 0, model: 'claude-opus-5-5', effort: 'high' as const, messageCount: 3 }
+    // A hard prompt (classifyTask -> 'hard') at High runs the turn at Extra High.
+    let rt = (await mk(true)).rt
+    rt.onPromptSubmit('Debug the race condition in the renderer and fix the root cause.', { kind: 'composer' })
+    expect(rt.stepRequest(mainStep).effort).toBe('xhigh')
+    // A routine prompt ('standard') stays at High.
+    rt = (await mk(true)).rt
+    rt.onPromptSubmit('Add a save button to the settings form.', { kind: 'composer' })
+    expect(rt.stepRequest(mainStep).effort ?? 'high').toBe('high')
+    // Off: a hard prompt stays at High.
+    rt = (await mk(false)).rt
+    rt.onPromptSubmit('Debug the race condition in the renderer.', { kind: 'composer' })
+    expect(rt.stepRequest(mainStep).effort ?? 'high').toBe('high')
+    // A subagent step never escalates (subagentEffort is off).
+    rt = (await mk(true)).rt
+    rt.onPromptSubmit('Investigate the deadlock and design a fix.', { kind: 'composer' })
+    expect(rt.stepRequest({ ...mainStep, agentId: 'a1' }).effort ?? 'high').toBe('high')
+  })
+
   test('crossing the threshold mid-turn tells Claude to finish the current unit, with the next batch of tool results', async () => {
     const { rt } = await started(s => {
       s.autopilot.enabled = true

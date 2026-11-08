@@ -9,7 +9,7 @@ describe('settings', () => {
     expect(s.profile).toBe('normal')
     expect(s.defaults).toBe(2)
     expect(s.autopilot).toMatchObject({ enabled: true, thresholdMode: 'percent', thresholdPercent: 70, continuation: 'clear', fallbackToCompact: true, autoContinue: true })
-    expect(s.frontier).toEqual({ enabled: true, effort: 'xhigh', subagentEffort: false })
+    expect(s.frontier).toEqual({ enabled: true, effort: 'xhigh', subagentEffort: false, autoEscalate: false })
     expect(s.ops).toMatchObject({ decisions: true, watchers: true })
     expect(s.progress.milestones).toBe(true)
     // Not asked for: the lazy-exit guard stays off, and every permission is exactly Classic's (2 Deny, 6 Ask).
@@ -33,7 +33,7 @@ describe('settings', () => {
     const c = classicSettings()
     expect(c.profile).toBe('classic')
     expect(c.autopilot.enabled).toBe(false)
-    expect(c.frontier).toEqual({ enabled: false, effort: 'max', subagentEffort: false })
+    expect(c.frontier).toEqual({ enabled: false, effort: 'max', subagentEffort: false, autoEscalate: false })
     expect(c.guard.enabled).toBe(false)
     expect(c.permissions.dangerous).toBe('deny')
     expect(c.permissions.gitDestructive).toBe('deny')
@@ -87,7 +87,7 @@ describe('profiles', () => {
     expect(listProfiles(defaultSettings()).map(p => p.id)).toEqual(['normal', 'frontier', 'low-resource', 'release-qa', 'economy', 'classic'])
   })
 
-  test('Economy is Normal with the plan gates, the burn rate, the alerts, a run budget, Autopilot at 25%, three subagents and Explore on Sonnet', () => {
+  test('Economy is Normal with the plan gates, the burn rate, the alerts, a run budget, Autopilot at 25%, three subagents, Explore on Sonnet, and High effort that lifts a hard turn to Extra High', () => {
     const e = findProfile(defaultSettings(), 'economy')!
     expect(e.isBuiltin).toBe(true)
     expect(e.systems.plan).toEqual({ ...defaultSettings().plan, gates: true, rate: true, alerts: [50, 75, 90] })
@@ -95,7 +95,7 @@ describe('profiles', () => {
     expect(e.systems.autopilot).toMatchObject({ enabled: true, thresholdMode: 'percent', thresholdPercent: 25 })
     expect(e.systems.subagents).toMatchObject({ mode: 'limit', limit: 3 })
     expect(e.systems.router).toMatchObject({ strategy: 'custom', mainLoop: false, subagents: true, custom: { ...defaultSettings().router.custom, explore: 'sonnet' } })
-    expect(e.systems.frontier).toEqual(defaultSettings().frontier)
+    expect(e.systems.frontier).toEqual({ enabled: true, effort: 'high', subagentEffort: false, autoEscalate: true })
     const applied = applyProfile(defaultSettings(), e)
     expect(applied.profile).toBe('economy')
     expect(isModified(applied)).toBe(false)
@@ -135,7 +135,7 @@ describe('profiles', () => {
   test('Frontier Max turns on max effort, the guard, the autopilot and medium resources', () => {
     const s = applyProfile(defaultSettings(), findProfile(defaultSettings(), 'frontier')!)
     expect(s.profile).toBe('frontier')
-    expect(s.frontier).toEqual({ enabled: true, effort: 'max', subagentEffort: false })
+    expect(s.frontier).toEqual({ enabled: true, effort: 'max', subagentEffort: false, autoEscalate: false })
     expect(s.guard.enabled).toBe(true)
     expect(s.autopilot.enabled).toBe(true)
     expect(s.resources.level).toBe('medium')

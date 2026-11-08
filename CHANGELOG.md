@@ -6,6 +6,25 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and ver
 `plugins/project-sentinel/.claude-plugin/plugin.json` and in `.claude-plugin/marketplace.json` must
 match. `claude plugin tag plugins/project-sentinel` checks this when tagging a release.
 
+## [1.8.1] - 2026-11-08
+
+Effort that follows the work. Frontier Max gains `autoEscalate`: with the effort set to High, a main turn whose
+own prompt reads as hard — a design, a debugging or root-cause hunt, a long detailed request, as the Model
+Router's `classifyTask` already judges it — is sent at Extra High instead, while routine turns stay at High. It
+is off by default and does nothing at any other effort or for subagents. The Economy profile now ships at High
+effort with `autoEscalate` on, so a run spends Extra High only where the turn needs it; its other settings are
+unchanged. Existing installs keep their effort and their profile.
+
+### Added
+
+- `frontier.autoEscalate` (Behavior → Frontier Max): lift a hard main turn from High to Extra High. Dark by
+  default; the Economy profile turns it on. Documented in README, CONFIGURATION and SECURITY.
+
+### Changed
+
+- The Economy profile's effort is now High with `autoEscalate` on (was Extra High flat). A fresh Economy pick
+  gets the new behaviour; an install already on Economy keeps what it has until it re-applies the profile.
+
 ## [1.8.0] - 2026-11-06
 
 The plan's week, kept in view and never run out mid-task. A claude.ai plan's 7-day window is shared by every

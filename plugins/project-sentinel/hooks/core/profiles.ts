@@ -50,6 +50,7 @@ const economy = (): SystemSettings => {
   s.autopilot = { ...s.autopilot, enabled: true, thresholdMode: 'percent', thresholdPercent: 25 }
   s.subagents = { ...s.subagents, mode: 'limit', limit: 3 }
   s.router = { ...s.router, strategy: 'custom', mainLoop: false, subagents: true, custom: { ...s.router.custom, explore: 'sonnet' } }
+  s.frontier = { ...s.frontier, effort: 'high', autoEscalate: true }
   return s
 }
 
@@ -60,7 +61,7 @@ const classic = (): SystemSettings => classicSystems()
 // does not find it "edited" after the update.
 const frontier = (): SystemSettings => {
   const s = classicSystems()
-  s.frontier = { enabled: true, effort: 'max', subagentEffort: false }
+  s.frontier = { enabled: true, effort: 'max', subagentEffort: false, autoEscalate: false }
   s.guard = { ...s.guard, enabled: true, strictness: 'standard' }
   s.autopilot = { ...s.autopilot, enabled: true, thresholdMode: 'percent', thresholdPercent: 70 }
   s.resources = { ...s.resources, level: 'medium', cpu: 70, ram: 85, enforcement: 'limit' }
@@ -182,6 +183,7 @@ const LABELS: Record<string, string> = {
   'frontier.enabled': 'Frontier Max',
   'frontier.effort': 'Effort',
   'frontier.subagentEffort': 'Effort for subagents',
+  'frontier.autoEscalate': 'Lift a hard turn to Extra High',
   'qa.enabled': 'Release check',
   'plan.rate': 'Burn rate beside the plan reading',
   'plan.gates': 'Plan gates',

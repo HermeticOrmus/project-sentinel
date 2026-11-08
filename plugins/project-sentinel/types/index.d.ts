@@ -62,7 +62,7 @@ export type ControlRoomSettings = {
      */
     waitMinutes: number
   }
-  frontier: { enabled: boolean; effort: FrontierEffort; subagentEffort: boolean }
+  frontier: { enabled: boolean; effort: FrontierEffort; subagentEffort: boolean; autoEscalate: boolean }
   qa: { enabled: boolean }
   guard: { enabled: boolean; strictness: GuardStrictness; maxPerTurn: number; maxPerSession: number; modelCheck: boolean }
   router: {

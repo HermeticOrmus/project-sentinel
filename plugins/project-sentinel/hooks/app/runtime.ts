@@ -58,7 +58,7 @@ import type { Decision } from '../features/permissions/categories'
 import * as prompts from '../features/prompts'
 import { type Pressure, gateHeavy, isOver } from '../features/resources/pressure'
 import { heavyKinds, heavyLabel } from '../features/resources/heavy'
-import { type Family, classifyTask, familyOf, routeMain, routeSubagent } from '../features/router'
+import { type Family, type TaskClass, classifyTask, familyOf, routeMain, routeSubagent } from '../features/router'
 import { decideSpawn, isOffered } from '../features/subagents'
 import { aliveRows, limitCount } from '../features/agents'
 import { doingOf } from '../features/digest'
@@ -203,7 +203,7 @@ export class Runtime {
   permissionLog: PermissionLogEntry[] = []
   permissionCounts = { denied: 0, asked: 0 }
   resourceStats = { refused: 0, noticesSent: 0, lastNoticeLevel: 'ok' as string }
-  frontier = { lastEffort: null as string | null, isEffortSupported: null as boolean | null }
+  frontier = { lastEffort: null as string | null, isEffortSupported: null as boolean | null, turnClass: null as TaskClass | null }
   compose = { isReached: false, deliveredFallback: false, isLikelyBypassed: false }
   /** Notes for Claude, waiting for the next batch of tool results or the next prompt (app/notes.ts). */
   readonly notesBox = new NoteBox()
@@ -2215,6 +2215,8 @@ export class Runtime {
     this.noteActivity()
     // Without a running turn the prompt starts the next one: a notification's is that turn's whatever its text.
     if (turnId === undefined) this.nextTurn = origin?.kind === 'task-notification' ? 'notification' : null
+    // A new turn's effort can lift to Extra High when its own prompt reads as hard (frontier.autoEscalate).
+    if (turnId === undefined) this.frontier.turnClass = classifyTask(text).cls
     if (origin?.kind === 'task-notification') {
       // Claude Code's own word that a background task ended (completed, failed, killed), as it is delivered.
       const task = Autopilot.notificationTask(text)
@@ -2494,6 +2496,10 @@ export class Runtime {
         if (isMain) this.frontier.isEffortSupported = false
       } else if (typeof e.effort === 'string') {
         out.effort = eff.frontier.effort ?? e.effort
+        // Auto-escalate: a hard main turn asked to run at High runs at Extra High instead (its own prompt's class).
+        if (isMain && this.settings.frontier.autoEscalate && out.effort === 'high' && this.frontier.turnClass === 'hard') {
+          out.effort = 'xhigh'
+        }
         if (isMain) {
           this.frontier.isEffortSupported = true
           this.frontier.lastEffort = out.effort ?? null

@@ -78,12 +78,16 @@ In the panel: **Behavior**.
 | `enabled` | on / off | on (Classic: off) | `/cr frontier on\|off`. Since 1.7.0 it no longer turns the lazy-exit guard on; the Frontier Max profile still sets both. |
 | `effort` | `max` / `xhigh` / `high` / `keep` | `xhigh`, *Extra High* (Classic: `max`) | Sent only to models that take an effort setting. `keep` leaves the session's effort alone and applies only the policy. |
 | `subagentEffort` | on / off | off | Also raise subagents' effort (costs more) |
+| `autoEscalate` | on / off | off (Economy: on) | When the effort is `high`, a main turn whose own prompt reads as hard (design, debugging, a root-cause hunt, a long detailed request) runs at Extra High instead; routine turns stay at High. Off at any other effort. Never touches subagents. |
 
 Frontier Max adds Project Sentinel's strongest engineering policy (finish the work, verify it,
 report what was and was not verified) to Claude's system prompt, and asks for the chosen effort on
 each request where the model has an effort setting. It never changes the model. Behavior → *This
 context* shows whether and how it reached Claude: in the system prompt, as a note while a warm cache
-holds the earlier prompt, or with a prompt where the system prompt's hook is not reached.
+holds the earlier prompt, or with a prompt where the system prompt's hook is not reached. With
+`autoEscalate` on and the effort at High, a main turn whose prompt classifies as hard (the Model
+Router's own `classifyTask`) is sent at Extra High; it is the one place the effort rises above what
+you set, and it is off unless you turn it on (the Economy profile does).
 
 ### Release check (`qa`)
 

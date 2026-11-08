@@ -57,6 +57,11 @@ describe('runtime', () => {
     rt = (await mk(true)).rt
     rt.onPromptSubmit('Investigate the deadlock and design a fix.', { kind: 'composer' })
     expect(rt.stepRequest({ ...mainStep, agentId: 'a1' }).effort ?? 'high').toBe('high')
+    // The plugin's OWN turns never escalate, even a long one that would read as hard by length (a handoff is ~360 words).
+    rt = (await mk(true)).rt
+    const longOwn = Array(200).fill('word').join(' ')
+    rt.onPromptSubmit(longOwn, { kind: 'plugin', name: 'project-sentinel' })
+    expect(rt.stepRequest(mainStep).effort ?? 'high').toBe('high')
   })
 
   test('crossing the threshold mid-turn tells Claude to finish the current unit, with the next batch of tool results', async () => {

@@ -1227,7 +1227,7 @@ export class Runtime {
     const base = prompts.continuationContext({
       runNumber: this.run?.number ?? null,
       sessionNumber,
-      handoffPath: this.handoffPath(),
+      handoffPath: this.notesPath(),
       notes: await this.readNotes(),
       policies,
       milestones: this.plan().tasks.map(t => ({ subject: t.subject, status: t.status, detail: t.detail })).slice(-30),
@@ -1848,6 +1848,7 @@ export class Runtime {
                 tokens: this.usage.tokens,
                 window: this.usage.window,
                 handoffFile: this.handoffFile(),
+                isShared: !Handoff.isRunNotes(this.settings.autopilot.handoffFile),
                 runNumber: this.run?.number ?? null,
                 sessionNumber: this.run === null ? 1 : (Chain.currentSession(this.run)?.index ?? 1),
                 planTool: this.planSource === 'milestones' ? this.milestonesTool : this.planSource === 'tasks' ? 'your task list (TodoWrite or the Task tools)' : null,
@@ -1880,7 +1881,7 @@ export class Runtime {
         return
       case 'submitContinuation': {
         const text = prompts.continuationPrompt({
-          handoffPath: this.handoffPath(),
+          handoffPath: this.notesPath(),
           sessionNumber: this.run === null ? 1 : (Chain.currentSession(this.run)?.index ?? 1),
         })
         host.after(400, () => void this.submitOwn(text, 'continuation'))
@@ -1963,6 +1964,8 @@ export class Runtime {
       total: p.total,
       continuity: null,
       ...(left.length === 0 ? {} : { leftRunning: left.map(t => ({ id: t.id, description: t.description, class: t.class ?? 'unknown', endedAt: null, status: null })) }),
+      // The notes as this handoff verified them: the fresh context trusts only this file, unchanged.
+      ...(isNotesWritten && notesAt !== null ? { notes: { path: this.handoffPath(), mtimeMs: notesAt } } : {}),
     }
     this.run = { ...this.run, lastHandoff: record }
     this.persistRun()
@@ -2010,25 +2013,44 @@ export class Runtime {
     if (this.settings.ui.toasts) this.host?.toast(Handoff.continuityToast(continuity), 6000)
   }
 
+  /** The notes the handoff into this session verified (their path then, their time of writing), or null: a park, a wake, a handoff that left none. */
+  private verifiedNotes(): { path: string; mtimeMs: number } | null {
+    const h = this.run?.lastHandoff
+    if (this.run === null || h === undefined || h === null || h.notes === undefined) return null
+    return h.toSession === (Chain.currentSession(this.run)?.index ?? 1) ? h.notes : null
+  }
+
+  /** Where this context's notes are: the file the handoff into it verified (a run number or a setting changed since does not lose them), else the run's file. */
+  private notesPath(): string {
+    return this.verifiedNotes()?.path ?? this.handoffPath()
+  }
+
   /**
    * The notes for a fresh context's first message: their text when they fit the cap (so no tool call
-   * reads them), their size and their age. Null when there is no file to read.
+   * reads them), their size, their age, and whether they are the file the handoff turn verified,
+   * unchanged since. Null when there is no file to read.
    */
   private async readNotes(): Promise<prompts.NotesRead | null> {
     const host = this.host
     if (host === null) return null
+    const verified = this.verifiedNotes()
+    const path = this.notesPath()
     try {
-      const stat = await host.stat(this.handoffPath(), false)
+      const stat = await host.stat(path, false)
       if (stat.kind !== 'file' || stat.size <= 0) return null
       const ageMs = Math.max(0, this.clock() - stat.mtimeMs)
-      const read = stat.size <= LIMITS.notesInlineBytes ? await host.readText(this.handoffPath()) : null
+      const read = stat.size <= LIMITS.notesInlineBytes ? await host.readText(path) : null
       // An empty read (the file changed under the look, or cannot be read as text): the fresh context reads it itself.
       if (read !== null && read.trim() === '') return null
-      const text = read === null || read.length > LIMITS.notesInlineBytes ? null : read
-      this.trace(`autopilot: notes ${this.handoffPath()} ${text === null ? 'over the cap, named only' : 'included'} (${stat.size} bytes, ${Math.round(ageMs / 1000)} s old)`)
-      return { text, bytes: stat.size, ageMs }
+      // The file can grow between the look and the read: the cap and the size named are of what was read.
+      const readBytes = read === null ? 0 : fmt.utf8Bytes(read)
+      const text = read === null || readBytes > LIMITS.notesInlineBytes ? null : read
+      const bytes = Math.max(stat.size, readBytes)
+      const isVerified = verified !== null && stat.mtimeMs === verified.mtimeMs
+      this.trace(`autopilot: notes ${path} ${text === null ? 'over the cap, named only' : 'included'} (${bytes} bytes, ${Math.round(ageMs / 1000)} s old, ${isVerified ? 'as the handoff verified them' : 'not verified by a handoff into this session'})`)
+      return { text, bytes, ageMs, isVerified, isShared: !Handoff.isRunNotes(this.settings.autopilot.handoffFile) }
     } catch {
-      this.trace(`autopilot: notes ${this.handoffPath()} not readable for the fresh context`)
+      this.trace(`autopilot: notes ${path} not readable for the fresh context`)
       return null
     }
   }
@@ -2158,7 +2180,7 @@ export class Runtime {
     }
     // The fresh context gets Autopilot's room to work, as after a handoff.
     if (this.settings.autopilot.enabled) this.stepAutopilot({ kind: 'externalClear' })
-    const text = prompts.freshResumePrompt({ sessionNumber: this.run === null ? 1 : (Chain.currentSession(this.run)?.index ?? 1), handoffPath: this.handoffPath(), why: purpose.why, then: purpose.then })
+    const text = prompts.freshResumePrompt({ sessionNumber: this.run === null ? 1 : (Chain.currentSession(this.run)?.index ?? 1), handoffPath: this.notesPath(), why: purpose.why, then: purpose.then })
     host.after(400, () => {
       void host
         .submit(text)

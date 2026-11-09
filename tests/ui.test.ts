@@ -699,6 +699,37 @@ describe('ui', () => {
     }
   })
 
+  test('Context names the run\'s own notes file: {run} in the setting is the run number, never the pattern', async ($, on) => {
+    const run = {
+      v: 1,
+      id: 'r1',
+      number: 7,
+      startedAt: 900_000,
+      updatedAt: 990_000,
+      root: '/work',
+      profile: 'normal',
+      status: 'active',
+      sessions: [
+        { id: 'earlier', index: 1, startedAt: 900_000, endedAt: 950_000, start: 'startup', end: 'handoff', peakTokens: 720_000, lastTokens: 718_000, window: 1_000_000, costUsd: 20, turns: 9, model: null, endNote: 'handoff at 700k tokens', transitions: [] },
+        { id: 'session-1', index: 2, startedAt: 950_000, endedAt: null, start: 'handoff', end: null, peakTokens: 300_000, lastTokens: 300_000, window: 1_000_000, costUsd: 4, turns: 2, model: null, endNote: null, transitions: [] },
+      ],
+      lastHandoff: LAST_HANDOFF,
+    }
+    const w = world(on, { tokens: 300_000, settings: { autopilot: { enabled: true, thresholdMode: 'percent', thresholdPercent: 70, handoffFile: '.control-room/run-{run}.md' } } })
+    w.store['run.v1.r1'] = run
+    w.store['runs.index.v1'] = ['r1']
+    await boot($, w)
+    for (const surface of ['terminal', 'desktop'] as const) {
+      const ui = await $.ui.mount({ plugin: 'project-sentinel', surface, component: 'Pane', requestId: 'control-room', props: paneProps(66) })
+      await ui.press({ key: 'tab-context' })
+      await w.clock.advance(300)
+      const text = textOf(await ui.drawn())
+      expect(text, surface).toContain('.control-room/run-7.md')
+      expect(text, surface).not.toContain('{run}')
+      await ui.unmount()
+    }
+  })
+
   test('Context shows the prompt cache: how long it stays warm, what it holds, Keep warm, and why it was rebuilt', { timeoutMs: 30_000 }, async ($, on) => {
     const w = world(on, { tokens: 300_000 })
     w.store['cache.v1'] = { v: 1, ttl: '1h', ttlSource: 'engine', verified: 'unknown', verifiedAt: null }

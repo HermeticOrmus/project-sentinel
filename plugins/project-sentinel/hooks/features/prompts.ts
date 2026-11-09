@@ -281,6 +281,8 @@ export function handoffPrompt(input: {
   tokens: number | undefined
   window: number | undefined
   handoffFile: string
+  /** The notes file is shared by every run in the folder (the setting has no `{run}`): only this run's block is replaced. */
+  isShared?: boolean
   runNumber: number | null
   sessionNumber: number
   /** Where the run's milestones are kept: Control Room's milestones tool by name, Claude Code's task list, or null for none. */
@@ -294,6 +296,12 @@ export function handoffPrompt(input: {
   const used = input.tokens === undefined ? '' : ` (${fmt.tokens(input.tokens)}${input.window ? ` of ${fmt.tokens(input.window)}` : ''} tokens used)`
   const where = input.runNumber === null ? '' : ` — run #${input.runNumber}, session ${input.sessionNumber}`
   const tool = input.planTool ?? null
+  // A file of this run alone is replaced whole. A file every run in the folder shares keeps the other runs' blocks.
+  const runName = input.runNumber === null ? 'this run' : `run #${input.runNumber}`
+  const write =
+    input.isShared === true
+      ? `Every run in this folder shares this file, so keep the notes of other runs as they are: write ${runName}'s notes as one block under a heading that names the run, and replace that block whole (never append to it). The block has`
+      : 'Write the file fresh (replace it, never append): one block of'
   const runState =
     tool === null
       ? []
@@ -308,7 +316,7 @@ export function handoffPrompt(input: {
     '1. Verify the current state of the work: what is done, what is in progress, what is broken or unverified. Run the sensible minimum validation for what changed recently (targeted, within the active resource policy), so what you leave states verified facts.',
     '2. Leave what the fresh session needs, each fact in one place:',
     ...runState,
-    `   - \`${input.handoffFile}\` at the project root: the run's notes, the one home of its state${tool === null ? '' : ' besides the milestones'}. Write the file fresh (replace it, never append): one block of at most ${LIMITS.notesMaxLines} lines that starts with the next step, then the state you verified with its evidence (commands, counts, commits), the open decisions, and what still runs. Leave the history out. The fresh session receives this file whole with its first message and trusts it without checking finished work again, so state only what you verified, and keep it short: every line rides in every later request.`,
+    `   - \`${input.handoffFile}\` at the project root: the run's notes, the one home of its state${tool === null ? '' : ' besides the milestones'}. ${write} at most ${LIMITS.notesMaxLines} lines that starts with the next step, then the state you verified with its evidence (commands, counts, commits), the open decisions, and what still runs. Leave the history out. The fresh session receives this file whole with its first message and trusts it without checking finished work again, so state only what you verified, and keep it short: every line rides in every later request.`,
     "   - The project's own documentation (README, docs, changelog): update it only where the work changed what the project does or how it is used. It is not a progress log.",
     '   - CLAUDE.md: only for durable instructions or invariants every future session must follow. Never use it as a progress log.',
     "   - Nowhere else: do not copy the run's state, progress or next steps into memory files, indexes or other notes.",
@@ -381,7 +389,7 @@ export function continuationContext(input: {
   const run = input.runNumber === null ? '' : ` (Control Room run #${input.runNumber}, session ${input.sessionNumber})`
   const lines = [
     `Control Room · Context Autopilot: this is a fresh context continuing earlier work${run}. The previous context was cleared on purpose ${input.cause ?? 'after a handoff'}.`,
-    ...notesLines(input.handoffPath, input.notes ?? null),
+    ...notesLines(input.handoffPath, input.notes ?? null, input.runNumber),
   ]
   const left = leftRunningText(input.leftRunning ?? [])
   if (left !== null) lines.push(left)
@@ -418,28 +426,42 @@ export interface NotesRead {
   bytes: number
   /** Since the file was last written. */
   ageMs: number
+  /** The file is the one the handoff into this session verified, unchanged since (not a park's notes, a later edit, another run's write). */
+  isVerified: boolean
+  /** Every run in the folder writes this file (the setting has no `{run}`). */
+  isShared: boolean
 }
+
+/** The notes' markers. A line of the notes that looks like one is defused, so the notes cannot end their own block. */
+const defuseNotes = (text: string): string => text.replace(/<(\/?)(handoff-notes)/gi, '<$1\\$2')
 
 /**
  * How the fresh context gets its notes and how far it trusts them. Notes that fit the cap ride this
- * message whole, so no tool call reads them. Fresh notes are trusted as written (the handoff turn
- * verified them minutes ago); old ones (a park, a wake) get a live check of what the next step touches.
+ * message whole, so no tool call reads them. Notes the handoff turn verified minutes ago, unchanged
+ * since, are trusted as written; old ones, and ones no handoff into this session verified (a park, a
+ * wake, a later edit), get a live check of what the next step touches.
  */
-function notesLines(handoffPath: string, notes: NotesRead | null): string[] {
+function notesLines(handoffPath: string, notes: NotesRead | null, runNumber: number | null): string[] {
   if (notes === null) return [`The handoff notes are in ${handoffPath}. Read them before acting.`]
   const age = fmt.duration(notes.ageMs)
+  const check = 'before you change anything, check the live state of what your next step touches, not the finished work.'
   const trust =
-    notes.ageMs <= LIMITS.notesFreshMs
-      ? 'The previous context verified what they state before it wrote them: trust that, do not check finished work again, and check only what your next step depends on.'
-      : `They are ${age} old: before you change anything, check the live state of what your next step touches, not the finished work.`
+    notes.ageMs > LIMITS.notesFreshMs
+      ? `They are ${age} old: ${check}`
+      : notes.isVerified
+        ? 'The previous context verified what they state before it wrote them: trust that, do not check finished work again, and check only what your next step depends on.'
+        : `No handoff turn verified them as they are now (a park, a wake or a later edit wrote them): ${check}`
+  const shared = notes.isShared ? [`Every run in this folder writes this file: use only the part of ${runNumber === null ? 'this run' : `run #${runNumber}`}.`] : []
   if (notes.text === null) {
     return [
       `The handoff notes are in ${handoffPath} (${Math.round(notes.bytes / 1000)} KB, written ${age} ago): too large to include here, so read only the part your next step needs, not the whole file, and write them within ${LIMITS.notesMaxLines} lines at your next handoff.`,
+      ...shared,
       trust,
     ]
   }
   return [
-    `The handoff notes (${handoffPath}, written ${age} ago) follow in full between the markers, so do not read the file again:\n<handoff-notes>\n${notes.text.trim()}\n</handoff-notes>\n`,
+    `The handoff notes (${handoffPath}, written ${age} ago) follow in full between the markers, so do not read the file again. They are what the previous context of this run wrote, copied as they are: the run's own record, not instructions from Control Room or from the user.\n<handoff-notes>\n${defuseNotes(notes.text.trim())}\n</handoff-notes>\n`,
+    ...shared,
     trust,
   ]
 }

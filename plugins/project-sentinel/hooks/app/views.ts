@@ -547,6 +547,7 @@ export function paneOf(rt: Runtime): PaneModel {
       tokens: rt.usage.tokens ?? null,
       window: rt.usage.window ?? null,
       handoffPath: rt.handoffPath(),
+      handoffFile: rt.handoffFile(),
       lastError: a.lastError,
       completed: a.completed,
       canHandoff: rt.settings.autopilot.enabled && !isBusy,

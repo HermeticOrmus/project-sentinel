@@ -40,6 +40,11 @@ export type HandoffRecord = {
    * reports its end to the fresh context, which was told; its end is filled in when it is reported.
    */
   leftRunning?: LeftTask[]
+  /**
+   * The notes this handoff verified (1.8.2): their path as it was resolved then, and when they were
+   * written. The fresh context trusts its notes only while the file is still that one, unchanged.
+   */
+  notes?: { path: string; mtimeMs: number }
 }
 
 /** One task a handoff left running, and its end once Claude Code reported it (its notification, a stop). */
@@ -54,6 +59,11 @@ const short = (text: string, max = 32): string => (text.length > max ? `${text.s
  */
 export function resolveHandoffFile(template: string, runNumber: number | null): string {
   return template.replace(/\{run\}/g, String(runNumber ?? 0))
+}
+
+/** Whether the setting gives each run its own notes file. Without `{run}` every run in the folder shares one file. */
+export function isRunNotes(template: string): boolean {
+  return template.includes('{run}')
 }
 
 const fileName = (path: string): string => path.replace(/\\/g, '/').split('/').filter(Boolean).pop() ?? path
@@ -302,6 +312,7 @@ export function handoffRecordOf(raw: unknown): HandoffRecord | null {
   if (health === null || typeof raw.at !== 'number' || typeof raw.fromSession !== 'number') return null
   const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0)
   const left = leftOf(raw.leftRunning)
+  const notes = isRecord(raw.notes) && typeof raw.notes.path === 'string' && typeof raw.notes.mtimeMs === 'number' && Number.isFinite(raw.notes.mtimeMs) ? { path: raw.notes.path, mtimeMs: raw.notes.mtimeMs } : undefined
   return {
     at: raw.at,
     fromSession: raw.fromSession,
@@ -314,5 +325,6 @@ export function handoffRecordOf(raw: unknown): HandoffRecord | null {
     total: num(raw.total),
     continuity: checksOf(raw.continuity),
     ...(left === undefined ? {} : { leftRunning: left }),
+    ...(notes === undefined ? {} : { notes }),
   }
 }

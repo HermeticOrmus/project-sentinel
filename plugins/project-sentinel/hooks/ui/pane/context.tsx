@@ -159,7 +159,7 @@ export function contextPage(kit: Kit, pane: PaneModel, hud: HudModel, chain: Cha
     isUnderWay || (ops !== undefined && (ops.cold.isArmed || ops.watchers.some(w => (w.status === 'armed' || w.status === 'due') && w.strategy !== 'warm')))
   const resume = ops === undefined ? null : resumeCard(kit, ops.resume, isAwaiting, isResumeRelevant)
   // What a handoff does, in one sentence while Autopilot simply watches; the numbered steps teach it while it is off.
-  const howWords = `At ${at} Claude finishes the step it is on and writes ${s.handoffFile}. ${thirdStep}`
+  const howWords = `At ${at} Claude finishes the step it is on and writes ${a.handoffFile}. ${thirdStep}`
 
   return (
     <Box flexDirection="column">
@@ -211,7 +211,7 @@ export function contextPage(kit: Kit, pane: PaneModel, hud: HudModel, chain: Cha
             ? null
             : s.enabled
               ? note(k, howWords, 'ap-how-line')
-              : steps(k, 'ap-steps', ['Claude finishes the step it is on. No new large tasks.', `It writes handoff notes to ${s.handoffFile}.`, thirdStep], accent),
+              : steps(k, 'ap-steps', ['Claude finishes the step it is on. No new large tasks.', `It writes handoff notes to ${a.handoffFile}.`, thirdStep], accent),
           isWaiting
             ? buttons(
                 k,
@@ -308,7 +308,7 @@ export function contextPage(kit: Kit, pane: PaneModel, hud: HudModel, chain: Cha
                 onIncrease: s.waitMinutes < 240 ? () => u(d => void (d.autopilot.waitMinutes = WAIT_STEPS.find(m => m > d.autopilot.waitMinutes) ?? 240)) : undefined,
               }),
             }),
-          s.enabled && row(k, { key: 'ap-file', label: 'Notes file', value: s.handoffFile, valueTone: 'muted' }),
+          s.enabled && row(k, { key: 'ap-file', label: 'Notes file', value: a.handoffFile, valueTone: 'muted' }),
         ],
       })}
 

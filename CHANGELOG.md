@@ -6,6 +6,33 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and ver
 `plugins/project-sentinel/.claude-plugin/plugin.json` and in `.claude-plugin/marketplace.json` must
 match. `claude plugin tag plugins/project-sentinel` checks this when tagging a release.
 
+## [1.8.2] - 2026-11-09
+
+The lean handoff. Measured on 346 session transcripts: a fresh context spent about 160k tokens before its first
+real edit, because every run in a folder shared one notes file that only grew (855 KB on one machine), the fresh
+context searched and read it with its own tool calls, and it was told to verify again what the handoff turn had
+verified minutes before. With a hand-off point near that figure a run could cycle without doing any work.
+
+### Added
+
+- `autopilot.handoffFile` accepts `{run}`, the run's number (`.control-room/run-{run}.md`): each run in a folder
+  keeps its own notes. Without the placeholder the setting works as before.
+- The notes ride the fresh context's first message: Control Room reads the file (at most 24 KB) and includes its
+  text in the `contextAutopilot` block, so no tool call searches for it. A larger file is named with its size and
+  is to be cut at the next handoff. Documented in SECURITY.
+
+### Changed
+
+- The handoff prompt gives each fact one home. The notes are written fresh each time (replaced, never appended),
+  within 150 lines, starting with the next step, as the only home of the run's state besides the milestones. The
+  project's documentation changes only where the work changed what the project does, and the run's state is
+  copied nowhere else (memory files, indexes, other notes).
+- A fresh context no longer verifies the whole state again. Notes younger than an hour are trusted as written,
+  and only what the next step depends on is checked; older notes (a park, a watcher's wake) get a live check of
+  what the next step touches. The handoff turn's own verification is unchanged.
+- The Context Autopilot policy section no longer names the notes file (the same text for every run), and asks
+  for the milestones to be kept current while working instead of the project documentation.
+
 ## [1.8.1] - 2026-11-08
 
 Effort that follows the work. Frontier Max gains `autoEscalate`: with the effort set to High, a main turn whose

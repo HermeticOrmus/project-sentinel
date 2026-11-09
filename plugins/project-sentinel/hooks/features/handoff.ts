@@ -48,6 +48,14 @@ export type LeftTask = { id: string; description: string; class: 'persistent' | 
 /** A short subject for a line's right-hand note. */
 const short = (text: string, max = 32): string => (text.length > max ? `${text.slice(0, max - 1)}…` : text)
 
+/**
+ * The notes file of a run: `{run}` in the setting stands for the run's number, so each run in a
+ * folder keeps its own notes (`.control-room/run-{run}.md`). Without a run it reads as 0.
+ */
+export function resolveHandoffFile(template: string, runNumber: number | null): string {
+  return template.replace(/\{run\}/g, String(runNumber ?? 0))
+}
+
 const fileName = (path: string): string => path.replace(/\\/g, '/').split('/').filter(Boolean).pop() ?? path
 
 const names = (paths: readonly string[]): string => {

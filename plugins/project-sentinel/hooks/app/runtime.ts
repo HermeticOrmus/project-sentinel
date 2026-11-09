@@ -955,7 +955,7 @@ export class Runtime {
   /** Files Claude's tools changed: the milestone under way owns them, and a verified milestone's file changed is noted on it. */
   private noteEvidenceEdits(paths: readonly string[], now: number): void {
     if (this.run === null) return
-    const ctx = { root: this.root, handoffFile: this.settings.autopilot.handoffFile }
+    const ctx = { root: this.root, handoffFile: this.handoffFile() }
     // Generated and temporary files (outside the project, temp and build folders, .claude, the handoff notes) are no milestone's evidence.
     const kept = paths.filter(p => groupOf(p, ctx) !== 'generated')
     if (kept.length === 0) return
@@ -1038,7 +1038,7 @@ export class Runtime {
     if (this.run === null) return
     // Reopened meanwhile: no snapshot of a milestone that is no longer done.
     if (this.plan().tasks.find(t => t.key === task.key)?.status !== 'completed') return
-    const ctx = { root: this.root, handoffFile: this.settings.autopilot.handoffFile }
+    const ctx = { root: this.root, handoffFile: this.handoffFile() }
     const files = paths.map(path => ({ path, ...(found.get(path) ?? { exists: false, size: null, mtimeMs: null, blob: null }), ...(groupOf(path, ctx) === 'docs' ? { isDoc: true } : {}) }))
     const session = Chain.currentSession(this.run)?.index ?? 1
     this.setEvidence(Evidence.addSnapshot(this.evidence(), { key: task.key, subject: task.subject, verifiedAt: now, session, checks, files, head }))
@@ -1228,6 +1228,7 @@ export class Runtime {
       runNumber: this.run?.number ?? null,
       sessionNumber,
       handoffPath: this.handoffPath(),
+      notes: await this.readNotes(),
       policies,
       milestones: this.plan().tasks.map(t => ({ subject: t.subject, status: t.status, detail: t.detail })).slice(-30),
       objective: this.run?.objectiveBy === 'claude' ? this.run.objective : null,
@@ -1393,9 +1394,14 @@ export class Runtime {
   // -------------------------------------------------------------------------
   // Usage, context and the autopilot
 
+  /** The notes file of this run, relative to the project root (`{run}` in the setting is the run's number). */
+  handoffFile(): string {
+    return Handoff.resolveHandoffFile(this.settings.autopilot.handoffFile, this.run?.number ?? null)
+  }
+
   handoffPath(): string {
     const sep = this.root.includes('\\') && !this.root.includes('/') ? '\\' : '/'
-    const file = this.settings.autopilot.handoffFile.replace(/\//g, sep)
+    const file = this.handoffFile().replace(/\//g, sep)
     return this.root === '' ? file : `${this.root.replace(/[\\/]+$/, '')}${sep}${file}`
   }
 
@@ -1837,11 +1843,11 @@ export class Runtime {
       case 'submitRetry': {
         const text =
           effect.kind === 'submitRetry'
-            ? prompts.handoffRetryPrompt(this.settings.autopilot.handoffFile)
+            ? prompts.handoffRetryPrompt(this.handoffFile())
             : prompts.handoffPrompt({
                 tokens: this.usage.tokens,
                 window: this.usage.window,
-                handoffFile: this.settings.autopilot.handoffFile,
+                handoffFile: this.handoffFile(),
                 runNumber: this.run?.number ?? null,
                 sessionNumber: this.run === null ? 1 : (Chain.currentSession(this.run)?.index ?? 1),
                 planTool: this.planSource === 'milestones' ? this.milestonesTool : this.planSource === 'tasks' ? 'your task list (TodoWrite or the Task tools)' : null,
@@ -1919,7 +1925,7 @@ export class Runtime {
     const p = this.progress()
     const ap = this.autopilot
     const services = left.filter(t => t.class === 'persistent')
-    const ctx = { root: this.root, handoffFile: this.settings.autopilot.handoffFile }
+    const ctx = { root: this.root, handoffFile: this.handoffFile() }
     const from = this.handoffTurn.fromTurn
     const changed = from < 0 ? [] : this.activity.changeList().filter(f => f.lastTurn >= from)
     const isClaudeMd = (path: string) => /(^|[\\/])claude\.md$/i.test(path)
@@ -1938,7 +1944,7 @@ export class Runtime {
         isPlanSettled: p.total > 0 && this.plan().tasks.every(t => t.status === 'completed' || Plan.isHeld(t.status)),
         next: p.next === null ? null : { subject: p.next.subject },
         isNotesWritten,
-        handoffFile: this.settings.autopilot.handoffFile,
+        handoffFile: this.handoffFile(),
         docsEdited: changed.filter(f => groupOf(f.path, ctx) === 'docs' && !isClaudeMd(f.path)).map(f => f.path),
         checks,
         isClaudeMdEdited: changed.some(f => isClaudeMd(f.path)),
@@ -1983,10 +1989,10 @@ export class Runtime {
     const index = Chain.currentSession(run)?.index ?? 1
     if (h.toSession !== index) return
     const p = this.progress()
-    const ctx = { root: this.root, handoffFile: this.settings.autopilot.handoffFile }
+    const ctx = { root: this.root, handoffFile: this.handoffFile() }
     const continuity = Handoff.continuityOf(
       {
-        handoffFile: this.settings.autopilot.handoffFile,
+        handoffFile: this.handoffFile(),
         reads: this.reads,
         isDoc: path => groupOf(path, ctx) === 'docs',
         isPlanUpdated: this.plan().session >= index && this.plan().updatedAt !== null,
@@ -2002,6 +2008,29 @@ export class Runtime {
     this.persistRun()
     this.publisher.mark('pane')
     if (this.settings.ui.toasts) this.host?.toast(Handoff.continuityToast(continuity), 6000)
+  }
+
+  /**
+   * The notes for a fresh context's first message: their text when they fit the cap (so no tool call
+   * reads them), their size and their age. Null when there is no file to read.
+   */
+  private async readNotes(): Promise<prompts.NotesRead | null> {
+    const host = this.host
+    if (host === null) return null
+    try {
+      const stat = await host.stat(this.handoffPath(), false)
+      if (stat.kind !== 'file' || stat.size <= 0) return null
+      const ageMs = Math.max(0, this.clock() - stat.mtimeMs)
+      const read = stat.size <= LIMITS.notesInlineBytes ? await host.readText(this.handoffPath()) : null
+      // An empty read (the file changed under the look, or cannot be read as text): the fresh context reads it itself.
+      if (read !== null && read.trim() === '') return null
+      const text = read === null || read.length > LIMITS.notesInlineBytes ? null : read
+      this.trace(`autopilot: notes ${this.handoffPath()} ${text === null ? 'over the cap, named only' : 'included'} (${stat.size} bytes, ${Math.round(ageMs / 1000)} s old)`)
+      return { text, bytes: stat.size, ageMs }
+    } catch {
+      this.trace(`autopilot: notes ${this.handoffPath()} not readable for the fresh context`)
+      return null
+    }
   }
 
   private async verifyHandoff(): Promise<{ isOk: boolean; mtimeMs: number | null }> {
@@ -2244,7 +2273,7 @@ export class Runtime {
       const park = this.settings.plan.gates ? this.ops.planWatcher() : null
       if (park !== null && park.status === 'armed') {
         this.ops.notesAskedByPerson(park.id)
-        context.push(this.delivered('plan', prompts.planParkNote({ id: park.id, wakeAt: park.wakeAt, handoffFile: this.settings.autopilot.handoffFile, now: this.clock() }), 'prompt'))
+        context.push(this.delivered('plan', prompts.planParkNote({ id: park.id, wakeAt: park.wakeAt, handoffFile: this.handoffFile(), now: this.clock() }), 'prompt'))
       }
     }
     const now = this.clock()
@@ -2426,7 +2455,7 @@ export class Runtime {
   private backgroundHoldNote(): string | null {
     if (!this.settings.autopilot.enabled || this.autopilot.state !== 'waiting-background') return null
     return prompts.backgroundResultNote({
-      handoffFile: this.settings.autopilot.handoffFile,
+      handoffFile: this.handoffFile(),
       planTool: this.planSource === 'milestones' ? this.milestonesTool : this.planSource === 'tasks' ? 'your task list' : null,
       // What the handoff still waits for: a server running beside it is not.
       left: Autopilot.blockingOf(this.autopilot.background).map(t => t.description),
@@ -3369,7 +3398,7 @@ export class Runtime {
       inFlight: this.lastStop === null ? null : this.lastStop.background,
       notes: notes.state,
       notesAt: notes.mtimeMs,
-      handoffFile: this.settings.autopilot.handoffFile,
+      handoffFile: this.handoffFile(),
     }
   }
 

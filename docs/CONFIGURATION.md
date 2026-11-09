@@ -62,7 +62,7 @@ In the panel: **Context**.
 | `continuation` | `clear` / `compact` / `manual` | `clear` | `clear` is preferred. `manual` writes the handoff and waits for **Start fresh context** (`/cr fresh`). |
 | `fallbackToCompact` | on / off | on | Compact only if `/clear` is refused |
 | `autoContinue` | on / off | on | Submit the continuation prompt automatically in the fresh context |
-| `handoffFile` | a relative path inside the project | `NEXT_SESSION_PROMPT.md` | Paths that would leave the project are rejected |
+| `handoffFile` | a relative path inside the project | `NEXT_SESSION_PROMPT.md` | Paths that would leave the project are rejected. `{run}` stands for the run's number (`.control-room/run-{run}.md`), so several runs in one folder each keep their own notes. The handoff asks for the file to be written fresh each time, within 150 lines; notes up to 24 KB ride the fresh context's first message whole, larger ones are named with their size. |
 | `waitMinutes` | 0–240 | 20 | How long a written handoff waits for finite background work (tests, builds, renders, agents) before it goes on and leaves that work running for the fresh context (0: never waits). Servers and watchers are never waited for. Context → Autopilot → *Wait for background work*. `/cr handoff wait [30m]` gives a waiting handoff longer once. |
 
 The effective threshold is capped at 97% of the window. It is also kept below Claude Code's own

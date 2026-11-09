@@ -250,7 +250,7 @@ export function fakeHost(
     },
     checkTool: async () => ({ decision: 'allow' as const }),
     copy: async () => true,
-    readText: async path => options.files?.[path] ?? '',
+    readText: async path => live.workspace[path]?.content ?? options.files?.[path] ?? '',
     stat: async path => {
       if (path in live.workspace) {
         const f = live.workspace[path]

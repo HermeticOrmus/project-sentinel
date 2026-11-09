@@ -110,7 +110,7 @@ export function policySections(
   if (settings.autopilot.enabled) {
     // Rounded so small window measurements do not churn the prompt cache.
     const rounded = autopilotThreshold === null ? null : Math.round(autopilotThreshold / 10_000) * 10_000
-    sections.push({ name: 'Context Autopilot', text: prompts.autopilotPolicy(rounded, settings.autopilot.handoffFile) })
+    sections.push({ name: 'Context Autopilot', text: prompts.autopilotPolicy(rounded) })
   }
   // The person's own Claude Code output style is the more specific choice: it wins, and this stands down.
   const style = live.nativeOutputStyle === undefined || live.nativeOutputStyle === null ? prompts.answerStylePolicy(settings.answers.style) : null

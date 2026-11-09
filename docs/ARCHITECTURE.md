@@ -427,9 +427,10 @@ crossing the threshold again never starts a second handoff.
   `Runtime.readNotes`; `prompts.notesLines` says how far to trust them), and
   the run plan's milestones and objective, so the fresh context rebuilds its
   task list and work progress carries on (the policies are in the system
-  prompt). The notes are called trusted only when they are the file the
-  handoff into this session verified (`lastHandoff.notes`: path and mtime),
-  unchanged since and younger than `LIMITS.notesFreshMs`; otherwise the
+  prompt). The notes are called trusted only when a handoff's own clear
+  started the context and they are the file that handoff verified
+  (`lastHandoff.notes`: path, mtime and size), unchanged since and younger
+  than `LIMITS.notesFreshMs`; otherwise the
   block asks for a live check of what the next step touches. The
   continuation prompt asks Claude to start from those notes and continue;
   ask the person only for decisions the handoff marks as theirs.

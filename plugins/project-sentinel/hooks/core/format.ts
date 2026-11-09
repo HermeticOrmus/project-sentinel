@@ -43,6 +43,16 @@ function groupThousands(n: number): string {
 export const percent = (n: number | undefined | null): string =>
   n === undefined || n === null || !Number.isFinite(n) ? '—' : `${Math.round(n)}%`
 
+/** The size of a text in UTF-8 bytes, as a file holds it ("é" is 2, "€" is 3, an emoji is 4). */
+export function utf8Bytes(text: string): number {
+  let n = 0
+  for (const ch of text) {
+    const c = ch.codePointAt(0) ?? 0
+    n += c < 0x80 ? 1 : c < 0x800 ? 2 : c < 0x10000 ? 3 : 4
+  }
+  return n
+}
+
 /** 8_040_000 → "2h 14m", 303_000 → "5m 3s", 42_000 → "42s". */
 export function duration(ms: number | undefined | null): string {
   if (ms === undefined || ms === null || !Number.isFinite(ms) || ms < 0) return '—'

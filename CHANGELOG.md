@@ -16,10 +16,16 @@ verified minutes before. With a hand-off point near that figure a run could cycl
 ### Added
 
 - `autopilot.handoffFile` accepts `{run}`, the run's number (`.control-room/run-{run}.md`): each run in a folder
-  keeps its own notes. Without the placeholder the setting works as before.
-- The notes ride the fresh context's first message: Control Room reads the file (at most 24 KB) and includes its
-  text in the `contextAutopilot` block, so no tool call searches for it. A larger file is named with its size and
-  is to be cut at the next handoff. Documented in SECURITY.
+  keeps its own notes. Without the placeholder every run in the folder still shares the one file: the handoff
+  then asks for this run's block alone to be replaced, the notes of other runs kept, and the fresh context is
+  told to use its own run's part.
+- The notes ride the fresh context's first message: Control Room reads the file (at most 24 KB, counted in
+  bytes) and includes its text in the `contextAutopilot` block, so no tool call searches for it. A larger file
+  is named with its size and is to be cut at the next handoff. The text is copied between markers as the run's
+  own record, not as instructions from Control Room, and a line of the notes that looks like a marker is
+  defused, so the notes cannot end their own block. Documented in SECURITY.
+- The handoff record (`lastHandoff`) keeps the notes it verified: their path as resolved then and when they
+  were written. The fresh context reads that file, also when the setting changed meanwhile.
 
 ### Changed
 
@@ -27,9 +33,12 @@ verified minutes before. With a hand-off point near that figure a run could cycl
   within 150 lines, starting with the next step, as the only home of the run's state besides the milestones. The
   project's documentation changes only where the work changed what the project does, and the run's state is
   copied nowhere else (memory files, indexes, other notes).
-- A fresh context no longer verifies the whole state again. Notes younger than an hour are trusted as written,
-  and only what the next step depends on is checked; older notes (a park, a watcher's wake) get a live check of
-  what the next step touches. The handoff turn's own verification is unchanged.
+- A fresh context no longer verifies the whole state again. Notes are trusted as written, and only what the
+  next step depends on is checked, when they are the file the handoff into this session verified, unchanged
+  since, and younger than an hour. Any other notes (older, written for a park or a watcher's wake, edited or
+  synced after the handoff turn checked them) get a live check of what the next step touches. The handoff
+  turn's own verification is unchanged.
+- Context → Autopilot names the run's own notes file (`{run}` resolved), not the setting's pattern.
 - The Context Autopilot policy section no longer names the notes file (the same text for every run), and asks
   for the milestones to be kept current while working instead of the project documentation.
 

@@ -553,6 +553,8 @@ export type AutopilotView = {
   tokens: number | null
   window: number | null
   handoffPath: string
+  /** The notes file of this run, relative to the project root (`{run}` in the setting resolved). */
+  handoffFile: string
   lastError: string | null
   completed: number
   canHandoff: boolean

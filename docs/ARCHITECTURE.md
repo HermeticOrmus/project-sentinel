@@ -397,12 +397,13 @@ crossing the threshold again never starts a second handoff.
 * The pending notice goes with the next batch of tool results (`classic.PostToolBatch`,
   app/notes.ts; finish the current logical unit; do not begin another large task).
 * The handoff prompt asks Claude to verify state, run minimum validation and
-  leave the work in four places, each for what it is for: the run's
-  milestones (the canonical run state, which Project Sentinel hands to the fresh
-  context), the project's own documentation, CLAUDE.md (durable
-  instructions only, never a progress log) and `NEXT_SESSION_PROMPT.md`
-  (the prompt Claude would want to receive) — **without prescribing its
-  contents**.
+  leave each fact in one place: the run's milestones (the canonical run
+  state, which Project Sentinel hands to the fresh context), the run's notes
+  file (`autopilot.handoffFile`, `{run}` resolved by `Handoff.resolveHandoffFile`;
+  written fresh within 150 lines, or, when every run in the folder shares
+  the file, as this run's block alone), the project's own documentation
+  (only where the work changed what the project does) and CLAUDE.md
+  (durable instructions only, never a progress log).
 * **Handoff Health** is read when the notes are verified, from what Control
   Room counted in the handoff turn: run state saved, the milestone under way
   captured, notes written, docs updated, validation recorded, CLAUDE.md.
@@ -421,12 +422,17 @@ crossing the threshold again never starts a second handoff.
 * After `/clear`: `classic.SessionStart{clear}` marks the fresh context
   (and is passed on unchanged); the plugin invalidates `prompt.context`, and
   the fresh context's first message carries one block, `contextAutopilot`,
-  once: the run and session numbers, where the handoff file is, and the run
-  plan's milestones and objective, so the fresh context rebuilds its task
-  list and work progress carries on (the policies are in the system prompt);
-  the continuation prompt asks Claude to read project docs +
-  `NEXT_SESSION_PROMPT.md` and continue; ask the person only for decisions
-  the handoff marks as theirs.
+  once: the run and session numbers, the handoff notes (their path and, up
+  to `LIMITS.notesInlineBytes`, their text between markers, read by
+  `Runtime.readNotes`; `prompts.notesLines` says how far to trust them), and
+  the run plan's milestones and objective, so the fresh context rebuilds its
+  task list and work progress carries on (the policies are in the system
+  prompt). The notes are called trusted only when they are the file the
+  handoff into this session verified (`lastHandoff.notes`: path and mtime),
+  unchanged since and younger than `LIMITS.notesFreshMs`; otherwise the
+  block asks for a live check of what the next step touches. The
+  continuation prompt asks Claude to start from those notes and continue;
+  ask the person only for decisions the handoff marks as theirs.
 * `/compact` is used only when `/clear` fails (and the fallback is allowed).
 
 ## 7. Feature mechanisms (summary)

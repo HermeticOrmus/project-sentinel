@@ -41,10 +41,10 @@ export type HandoffRecord = {
    */
   leftRunning?: LeftTask[]
   /**
-   * The notes this handoff verified (1.8.2): their path as it was resolved then, and when they were
-   * written. The fresh context trusts its notes only while the file is still that one, unchanged.
+   * The notes this handoff verified (1.8.2): their path as it was resolved then, when they were written
+   * and their size. The fresh context trusts its notes only while the file is still that one, unchanged.
    */
-  notes?: { path: string; mtimeMs: number }
+  notes?: { path: string; mtimeMs: number; size?: number }
 }
 
 /** One task a handoff left running, and its end once Claude Code reported it (its notification, a stop). */
@@ -312,7 +312,7 @@ export function handoffRecordOf(raw: unknown): HandoffRecord | null {
   if (health === null || typeof raw.at !== 'number' || typeof raw.fromSession !== 'number') return null
   const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0)
   const left = leftOf(raw.leftRunning)
-  const notes = isRecord(raw.notes) && typeof raw.notes.path === 'string' && typeof raw.notes.mtimeMs === 'number' && Number.isFinite(raw.notes.mtimeMs) ? { path: raw.notes.path, mtimeMs: raw.notes.mtimeMs } : undefined
+  const notes = isRecord(raw.notes) && typeof raw.notes.path === 'string' && typeof raw.notes.mtimeMs === 'number' && Number.isFinite(raw.notes.mtimeMs) ? { path: raw.notes.path, mtimeMs: raw.notes.mtimeMs, ...(typeof raw.notes.size === 'number' && Number.isFinite(raw.notes.size) ? { size: raw.notes.size } : {}) } : undefined
   return {
     at: raw.at,
     fromSession: raw.fromSession,

@@ -1228,7 +1228,8 @@ export class Runtime {
       runNumber: this.run?.number ?? null,
       sessionNumber,
       handoffPath: this.notesPath(),
-      notes: await this.readNotes(),
+      // Only the handoff's own clear makes these the notes a handoff turn just verified (a wake or a cold resume clears for another reason).
+      notes: await this.readNotes(purpose === null),
       policies,
       milestones: this.plan().tasks.map(t => ({ subject: t.subject, status: t.status, detail: t.detail })).slice(-30),
       objective: this.run?.objectiveBy === 'claude' ? this.run.objective : null,
@@ -1843,7 +1844,7 @@ export class Runtime {
       case 'submitRetry': {
         const text =
           effect.kind === 'submitRetry'
-            ? prompts.handoffRetryPrompt(this.handoffFile())
+            ? prompts.handoffRetryPrompt(this.handoffFile(), Handoff.isRunNotes(this.settings.autopilot.handoffFile) ? null : { runNumber: this.run?.number ?? null })
             : prompts.handoffPrompt({
                 tokens: this.usage.tokens,
                 window: this.usage.window,
@@ -1864,7 +1865,7 @@ export class Runtime {
         await this.checkEvidence('handoff')
         const notes = await this.verifyHandoff()
         if (notes.isOk) this.questEvent('handoff', 'Clean handoff: notes verified')
-        this.recordHandoffHealth(notes.isOk, notes.mtimeMs)
+        this.recordHandoffHealth(notes.isOk, notes.mtimeMs, this.autopilot.leftRunning, notes.size)
         this.stepAutopilot({ kind: 'handoffVerified', isOk: notes.isOk, now: await this.engineNow() })
         return
       }
@@ -1921,7 +1922,7 @@ export class Runtime {
    * left in each of the four places (the milestones, the project's docs,
    * CLAUDE.md, the notes), and whether a check ran in this context.
    */
-  private recordHandoffHealth(isNotesWritten: boolean, notesAt: number | null = null, left: readonly Autopilot.BackgroundTask[] = this.autopilot.leftRunning): void {
+  private recordHandoffHealth(isNotesWritten: boolean, notesAt: number | null = null, left: readonly Autopilot.BackgroundTask[] = this.autopilot.leftRunning, notesSize: number | null = null): void {
     if (this.run === null) return
     const p = this.progress()
     const ap = this.autopilot
@@ -1965,7 +1966,7 @@ export class Runtime {
       continuity: null,
       ...(left.length === 0 ? {} : { leftRunning: left.map(t => ({ id: t.id, description: t.description, class: t.class ?? 'unknown', endedAt: null, status: null })) }),
       // The notes as this handoff verified them: the fresh context trusts only this file, unchanged.
-      ...(isNotesWritten && notesAt !== null ? { notes: { path: this.handoffPath(), mtimeMs: notesAt } } : {}),
+      ...(isNotesWritten && notesAt !== null ? { notes: { path: this.handoffPath(), mtimeMs: notesAt, ...(notesSize === null ? {} : { size: notesSize }) } } : {}),
     }
     this.run = { ...this.run, lastHandoff: record }
     this.persistRun()
@@ -2014,7 +2015,7 @@ export class Runtime {
   }
 
   /** The notes the handoff into this session verified (their path then, their time of writing), or null: a park, a wake, a handoff that left none. */
-  private verifiedNotes(): { path: string; mtimeMs: number } | null {
+  private verifiedNotes(): { path: string; mtimeMs: number; size?: number } | null {
     const h = this.run?.lastHandoff
     if (this.run === null || h === undefined || h === null || h.notes === undefined) return null
     return h.toSession === (Chain.currentSession(this.run)?.index ?? 1) ? h.notes : null
@@ -2028,12 +2029,13 @@ export class Runtime {
   /**
    * The notes for a fresh context's first message: their text when they fit the cap (so no tool call
    * reads them), their size, their age, and whether they are the file the handoff turn verified,
-   * unchanged since. Null when there is no file to read.
+   * unchanged since (same time of writing, same size), in the context that handoff's own clear started.
+   * Null when there is no file to read.
    */
-  private async readNotes(): Promise<prompts.NotesRead | null> {
+  private async readNotes(isHandoffClear: boolean): Promise<prompts.NotesRead | null> {
     const host = this.host
     if (host === null) return null
-    const verified = this.verifiedNotes()
+    const verified = isHandoffClear ? this.verifiedNotes() : null
     const path = this.notesPath()
     try {
       const stat = await host.stat(path, false)
@@ -2046,7 +2048,7 @@ export class Runtime {
       const readBytes = read === null ? 0 : fmt.utf8Bytes(read)
       const text = read === null || readBytes > LIMITS.notesInlineBytes ? null : read
       const bytes = Math.max(stat.size, readBytes)
-      const isVerified = verified !== null && stat.mtimeMs === verified.mtimeMs
+      const isVerified = verified !== null && stat.mtimeMs === verified.mtimeMs && (verified.size === undefined || stat.size === verified.size)
       this.trace(`autopilot: notes ${path} ${text === null ? 'over the cap, named only' : 'included'} (${bytes} bytes, ${Math.round(ageMs / 1000)} s old, ${isVerified ? 'as the handoff verified them' : 'not verified by a handoff into this session'})`)
       return { text, bytes, ageMs, isVerified, isShared: !Handoff.isRunNotes(this.settings.autopilot.handoffFile) }
     } catch {
@@ -2055,9 +2057,9 @@ export class Runtime {
     }
   }
 
-  private async verifyHandoff(): Promise<{ isOk: boolean; mtimeMs: number | null }> {
+  private async verifyHandoff(): Promise<{ isOk: boolean; mtimeMs: number | null; size: number | null }> {
     const host = this.host
-    if (host === null) return { isOk: false, mtimeMs: null }
+    if (host === null) return { isOk: false, mtimeMs: null, size: null }
     const ap = this.autopilot
     const since = ap.handoffSince ?? 0
     try {
@@ -2066,10 +2068,10 @@ export class Runtime {
       // After a wait for background work: were the notes written again once it ended (its result recorded)?
       const after = ap.backgroundEndedAt === null ? '' : `; ${stat.mtimeMs >= ap.backgroundEndedAt - 1000 ? 'updated' : 'not updated'} after the background work ended`
       this.trace(`autopilot: notes ${this.handoffPath()} ${isOk ? 'written' : 'not fresh'} (${stat.size} bytes, modified ${Math.round((stat.mtimeMs - since) / 1000)} s after the handoff began${after})`)
-      return { isOk, mtimeMs: stat.mtimeMs }
+      return { isOk, mtimeMs: stat.mtimeMs, size: stat.size }
     } catch {
       this.trace(`autopilot: notes ${this.handoffPath()} not found`)
-      return { isOk: false, mtimeMs: null }
+      return { isOk: false, mtimeMs: null, size: null }
     }
   }
 

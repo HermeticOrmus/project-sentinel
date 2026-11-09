@@ -959,7 +959,7 @@ export class Operations {
     this.setInFlight({ kind: 'park', ids: [id], isForced: false })
     const planTool = rt.planSource === 'milestones' ? rt.milestonesTool : rt.planSource === 'tasks' ? 'your task list (TodoWrite or the Task tools)' : null
     try {
-      const result = await host.submit(prompts.parkPrompt({ id, label: w.label, wakeAt: w.wakeAt, handoffFile: rt.settings.autopilot.handoffFile, planTool, plan, now: this.now() }))
+      const result = await host.submit(prompts.parkPrompt({ id, label: w.label, wakeAt: w.wakeAt, handoffFile: rt.handoffFile(), planTool, plan, now: this.now() }))
       if (result.drop !== undefined) throw new Error(result.drop)
       this.commit(Ops.patchWatcher(this.current(), id, { notesAskedAt: this.now() }))
       this.log(`${id}: Claude was asked to write the notes before the park`)

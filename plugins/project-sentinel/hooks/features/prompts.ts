@@ -4,6 +4,7 @@
  * policy section only changes when its inputs change (prompt cache safe).
  */
 
+import { LIMITS } from '../constants'
 import * as fmt from '../core/format'
 import { clockAhead } from './when'
 import type { AnswerStyle, FrontierEffort, ResourceEnforcement, SubagentMode } from '../core/settings'
@@ -186,11 +187,11 @@ export function subagentPolicy(mode: SubagentMode, limit: number): string | null
   }
 }
 
-export function autopilotPolicy(thresholdTokens: number | null, handoffFile: string): string {
+export function autopilotPolicy(thresholdTokens: number | null): string {
   const at = thresholdTokens === null ? 'its threshold' : `about ${fmt.tokens(thresholdTokens)} tokens`
   return [
     '## Context Autopilot (Control Room)',
-    `When this context window reaches ${at}, Control Room will ask you to finish the current logical unit of work and then to write a handoff (including ${handoffFile}) before the context is cleared and a fresh session continues the work. Keep project documentation and handoff notes truthful and current so that a fresh session can pick up without this conversation.`,
+    `When this context window reaches ${at}, Control Room will ask you to finish the current logical unit of work and then to write a handoff (the run's milestones and its notes file) before the context is cleared and a fresh session continues the work from them. Keep the milestones current as you work; the notes are written at the handoff.`,
   ].join('\n')
 }
 
@@ -305,11 +306,12 @@ export function handoffPrompt(input: {
     'This context will be cleared after this turn and a fresh session will continue the work, with no memory of this conversation beyond what you leave behind. Before that:',
     '',
     '1. Verify the current state of the work: what is done, what is in progress, what is broken or unverified. Run the sensible minimum validation for what changed recently (targeted, within the active resource policy), so what you leave states verified facts.',
-    '2. Leave what the fresh session needs in these places, each for what it is for:',
+    '2. Leave what the fresh session needs, each fact in one place:',
     ...runState,
-    "   - The project's own documentation (README, docs, changelog, plans it already keeps): update it where the work changed what it says, with important unfinished work and open decisions where the project records them.",
+    `   - \`${input.handoffFile}\` at the project root: the run's notes, the one home of its state${tool === null ? '' : ' besides the milestones'}. Write the file fresh (replace it, never append): one block of at most ${LIMITS.notesMaxLines} lines that starts with the next step, then the state you verified with its evidence (commands, counts, commits), the open decisions, and what still runs. Leave the history out. The fresh session receives this file whole with its first message and trusts it without checking finished work again, so state only what you verified, and keep it short: every line rides in every later request.`,
+    "   - The project's own documentation (README, docs, changelog): update it only where the work changed what the project does or how it is used. It is not a progress log.",
     '   - CLAUDE.md: only for durable instructions or invariants every future session must follow. Never use it as a progress log.',
-    `   - \`${input.handoffFile}\` at the project root: the prompt you would want to receive to continue this work effectively. You decide its contents from the project and its documentation.`,
+    "   - Nowhere else: do not copy the run's state, progress or next steps into memory files, indexes or other notes.",
     '',
     ...(input.stale === undefined || input.stale === null ? [] : [`${input.stale} If you cannot rerun them in this turn, say in the notes that their verification is stale.`, '']),
     'Do not start new feature work in this turn. When the handoff is written, end your turn with a short summary.',
@@ -373,11 +375,13 @@ export function continuationContext(input: {
   leftRunning?: readonly { id: string; description: string; class?: string }[]
   /** Completed milestones whose verification went stale (features/evidence.ts staleText), or null. */
   stale?: string | null
+  /** The notes as read from the disk for this context: their text when they fit the cap, their size, their age. Absent: not read. */
+  notes?: NotesRead | null
 }): string {
   const run = input.runNumber === null ? '' : ` (Control Room run #${input.runNumber}, session ${input.sessionNumber})`
   const lines = [
     `Control Room · Context Autopilot: this is a fresh context continuing earlier work${run}. The previous context was cleared on purpose ${input.cause ?? 'after a handoff'}.`,
-    `The handoff notes are in ${input.handoffPath}. Read them and the project documentation they point to before acting.`,
+    ...notesLines(input.handoffPath, input.notes ?? null),
   ]
   const left = leftRunningText(input.leftRunning ?? [])
   if (left !== null) lines.push(left)
@@ -407,9 +411,42 @@ export function continuationContext(input: {
   return lines.join(' ')
 }
 
+/** The handoff notes as the plugin read them for a fresh context. */
+export interface NotesRead {
+  /** The whole text, when the file fits `LIMITS.notesInlineBytes`; null when it is larger. */
+  text: string | null
+  bytes: number
+  /** Since the file was last written. */
+  ageMs: number
+}
+
+/**
+ * How the fresh context gets its notes and how far it trusts them. Notes that fit the cap ride this
+ * message whole, so no tool call reads them. Fresh notes are trusted as written (the handoff turn
+ * verified them minutes ago); old ones (a park, a wake) get a live check of what the next step touches.
+ */
+function notesLines(handoffPath: string, notes: NotesRead | null): string[] {
+  if (notes === null) return [`The handoff notes are in ${handoffPath}. Read them before acting.`]
+  const age = fmt.duration(notes.ageMs)
+  const trust =
+    notes.ageMs <= LIMITS.notesFreshMs
+      ? 'The previous context verified what they state before it wrote them: trust that, do not check finished work again, and check only what your next step depends on.'
+      : `They are ${age} old: before you change anything, check the live state of what your next step touches, not the finished work.`
+  if (notes.text === null) {
+    return [
+      `The handoff notes are in ${handoffPath} (${Math.round(notes.bytes / 1000)} KB, written ${age} ago): too large to include here, so read only the part your next step needs, not the whole file, and write them within ${LIMITS.notesMaxLines} lines at your next handoff.`,
+      trust,
+    ]
+  }
+  return [
+    `The handoff notes (${handoffPath}, written ${age} ago) follow in full between the markers, so do not read the file again:\n<handoff-notes>\n${notes.text.trim()}\n</handoff-notes>\n`,
+    trust,
+  ]
+}
+
 export function continuationPrompt(input: { handoffPath: string; sessionNumber: number }): string {
   return [
-    `${OWN_PROMPT.continuation}${input.sessionNumber}). Start by reading \`${input.handoffPath}\` and the project documentation it refers to, then verify the current state of the work.`,
+    `${OWN_PROMPT.continuation}${input.sessionNumber}). Start from the handoff notes: Control Room put them in this message's context when they fit; read \`${input.handoffPath}\` only if they are not there. Follow what that context says about how far to trust them.`,
     'Then continue the work autonomously from where the previous session left off.',
     'If the handoff records a decision that genuinely needs the user, ask for it instead of guessing; otherwise keep going.',
   ].join(' ')
@@ -508,7 +545,7 @@ export function wakePrompt(input: { id: string; label: string; armedAt: number; 
 export function freshResumePrompt(input: { sessionNumber: number; handoffPath: string; why: string; then: string }): string {
   return [
     `${OWN_PROMPT.resume}${input.sessionNumber}): ${input.why}`,
-    `Start by reading \`${input.handoffPath}\` and the project documentation it refers to, then verify the current state of the work.`,
+    `Start from the handoff notes: Control Room put them in this message's context when they fit; read \`${input.handoffPath}\` only if they are not there. Follow what that context says about how far to trust them.`,
     input.then,
     'If something genuinely needs the user, ask for it (the Decision Inbox for a non-urgent choice); otherwise keep going.',
   ].join(' ')

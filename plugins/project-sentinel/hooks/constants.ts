@@ -60,6 +60,12 @@ export const LIMITS = {
   pressureNoticeGapMs: 45_000,
   /** How long a sample may be stale before monitoring reads as unavailable. */
   sampleStaleMs: 30_000,
+  /** The handoff notes' cap in lines, as the handoff prompt states it. */
+  notesMaxLines: 150,
+  /** The handoff notes ride the fresh context's first message whole up to this size (150 lines of ordinary prose fit). */
+  notesInlineBytes: 24_000,
+  /** Notes younger than this are trusted as written; older ones get a live check of what the next step touches. */
+  notesFreshMs: 60 * 60_000,
   /** Delay between the handoff turn ending and the automatic /clear. */
   clearDelayMs: 1200,
   /** How long the handoff waits for its /compact command's compaction (a long context takes a while) before it gives up. */
@@ -79,7 +85,7 @@ export const LIMITS = {
 } as const
 
 /** The plugin's version, as in its manifest (kept in step on release). */
-export const VERSION = '1.8.1'
+export const VERSION = '1.8.2'
 
 /** Version floor this release was verified on (Desktop 2.1.289, CLI 2.1.292). */
 export const MIN_ENGINE = '2.1.289'

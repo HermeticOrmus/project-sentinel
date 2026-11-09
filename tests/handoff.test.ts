@@ -8,7 +8,7 @@ import { defaultSettings } from '../hooks/core/settings'
 import type { Settings } from '../hooks/core/settings'
 import { type HandoffRecord, continuityOf, continuityToast, handoffRecordOf, healthOf, scoreOf } from '../hooks/features/handoff'
 import { emptyPlan, fromMilestones, planOf, progressOf } from '../hooks/features/plan'
-import { continuationContext, handoffPrompt } from '../hooks/features/prompts'
+import { continuationContext, continuationPrompt, handoffPrompt } from '../hooks/features/prompts'
 import { fakeHost } from './fixtures/fake-host'
 
 const facts = {
@@ -82,7 +82,7 @@ describe('run state', () => {
     expect(context).toContain('[blocked: needs the deploy key] Deploy')
   })
 
-  test('the handoff prompt names the four places, each for what it is for, without prescribing the notes', () => {
+  test('the handoff prompt gives each fact one home: milestones, capped notes written fresh, docs for behaviour only, nowhere else', () => {
     const prompt = handoffPrompt({ tokens: 712_000, window: 1_000_000, handoffFile: 'NEXT_SESSION_PROMPT.md', runNumber: 3, sessionNumber: 4, planTool: 'mcp__project-sentinel__milestones' })
     expect(prompt).toContain('`mcp__project-sentinel__milestones`')
     expect(prompt).toContain('canonical record of progress')
@@ -90,8 +90,14 @@ describe('run state', () => {
     expect(prompt).toContain("The project's own documentation")
     expect(prompt).toContain('CLAUDE.md: only for durable instructions')
     expect(prompt).toContain('Never use it as a progress log')
-    expect(prompt).toContain('the prompt you would want to receive')
-    expect(prompt).toContain('You decide its contents')
+    expect(prompt).toContain('`NEXT_SESSION_PROMPT.md` at the project root: the run\'s notes, the one home of its state besides the milestones')
+    expect(prompt).toContain('replace it, never append')
+    expect(prompt).toContain('at most 150 lines that starts with the next step')
+    expect(prompt).toContain('It is not a progress log')
+    expect(prompt).toContain('Nowhere else: do not copy')
+    // The state is verified once, here; the fresh context is not asked to verify it again.
+    expect(prompt).toContain('1. Verify the current state of the work')
+    expect(continuationPrompt({ handoffPath: '/w/N.md', sessionNumber: 2 })).not.toContain('verify the current state')
     // Claude Code's own task list knows no verifying or blocked; without any, run state is not asked for.
     expect(handoffPrompt({ tokens: undefined, window: undefined, handoffFile: 'N.md', runNumber: null, sessionNumber: 1, planTool: 'your task list (TodoWrite or the Task tools)' })).not.toContain('blocker')
     expect(handoffPrompt({ tokens: undefined, window: undefined, handoffFile: 'N.md', runNumber: null, sessionNumber: 1, planTool: null })).not.toContain('milestones')

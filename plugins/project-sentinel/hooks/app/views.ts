@@ -463,7 +463,7 @@ function hudActivityOf(rt: Runtime, now: number): HudModel['activity'] {
   }
   const items = turnItemsOf(rt)
   const files = rt.activity.changeList()
-  const ctx = { root: rt.root, handoffFile: rt.settings.autopilot.handoffFile }
+  const ctx = { root: rt.root, handoffFile: rt.handoffFile() }
   const lines = turnSummaryOf({
     items,
     changed: files.filter(f => turn.files.has(f.path)),
@@ -780,7 +780,7 @@ export function activityOf(rt: Runtime): ActivityView {
   const now = Date.now()
   const files = rt.activity.changeList()
   const selected = rt.ui.selectedPath === null ? null : (rt.activity.changes.get(rt.ui.selectedPath) ?? null)
-  const ctx = { root: rt.root, handoffFile: rt.settings.autopilot.handoffFile }
+  const ctx = { root: rt.root, handoffFile: rt.handoffFile() }
   const group = (path: string) => groupOf(path, ctx)
   const turnItems = turnItemsOf(rt)
   const attention = attentionOf(turnItems, now)
